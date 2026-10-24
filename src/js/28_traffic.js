@@ -142,7 +142,7 @@ function trafficTick(dt) {
     }
     // the player, when on this vehicle's path ahead
     const dpx = C.x - v.x, dpz = C.z - v.z;
-    if (!v.cop && dpx * dpx + dpz * dpz < 70 * 70) {
+    if (!v.cop && !C.ghost && dpx * dpx + dpz * dpz < 70 * 70) {
       const n = nearestOnPts(path.pts, C.x, C.z);
       // a player who just sits there is, after a while, nudged past rather than waited on for ever
       const blocked = n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && n.s - v.s < 8 && v.v < 0.3 && pv < 0.5;
@@ -206,7 +206,7 @@ function trafficSpawn(r, minD) {
 }
 // the player against the traffic: two discs under the car against each vehicle's box; both feel it
 function trafficCollide(dt) {
-  const C = CAR, sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), rc = C.P.W * 0.5 * 0.9;
+  const C = CAR; if (C.ghost || !C.P) return; const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), rc = C.P.W * 0.5 * 0.9;
   for (const v of TR.veh) {
     const dx = v.x - C.x, dz = v.z - C.z; if (dx * dx + dz * dz > 100) continue;
     const c = Math.cos(v.yaw), sn = Math.sin(v.yaw), hx = v.W / 2, hz = v.L / 2, cx = v.x - sn * 0, cz = v.z - c * 0;

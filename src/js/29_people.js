@@ -83,7 +83,7 @@ function peopleTick(dt) {
 }
 // a walker hit by the car is knocked over (and the car feels a bump)
 function peopleCollide() {
-  const C = CAR, sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), hl = C.P.L * 0.55, hw = C.P.W * 0.5;
+  const C = CAR; if (C.ghost || !C.P) return; const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), hl = C.P.L * 0.55, hw = C.P.W * 0.5;
   for (const w of PEO.list) {
     const dx = w.x - C.x, dz = w.z - C.z; if (dx * dx + dz * dz > 16 || w.knocked > 0) continue;
     const lu = dx * cy - dz * sy, lv = dx * sy + dz * cy;   // across, along the car

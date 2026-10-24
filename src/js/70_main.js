@@ -23,6 +23,8 @@ function boot() {
   G.bootMs = { map: Math.round(t1 - t0), atlas: Math.round(t2 - t1), city: Math.round(t3 - t2), gl: Math.round(performance.now() - t3) };
   HUD.minimap = canvas(200, 200); const g = HUD.minimap.getContext('2d'); g.drawImage(MAP.ground, 0, 0, 200, 200);
   uiInit(); const ld = $('loading'); if (ld) ld.remove();
+  if (/halt/.test(location.hash)) G.halt = true;   // the test harness drives frames by hand
+  aerialEnter(false);
   requestAnimationFrame(frame);
 }
 // ---------- the drive ----------
@@ -34,7 +36,7 @@ function startDrive(carIdx) {
   trafficReset();
   r3CarSet(CARS[carIdx]); camReset();
   CTL.mode = SET.ctrl === 'tilt' && CTL.tilt.ok ? 'tilt' : 'touch'; layoutPads(); setTimeout(tiltRecenter, 300);
-  G.mode = 'drive'; G.paused = false; show(null);
+  G.mode = 'drive'; G.paused = false; show(null); r3FogRange(FOG_NEAR, FOG_FAR); CAR.ghost = false;
   if (AU.ctx) engineStart(CARS[carIdx].engine);
   hudMsg('高雄・港都', '自由行駛・停住時按住煞車就倒車・右上切換視角', '#ffd23a', 3);
 }
@@ -49,7 +51,32 @@ function frame(now) {
   tick(dt);
   render(dt);
 }
+// the city carries on under the aerial views: the traffic and people live round the spot the camera looks at
+function aerialTick(dt) {
+  G.t += dt; const C = CAR, A = AERIAL;
+  C.x = A.lookX; C.z = A.lookZ; C.vx = C.vy = 0; C.y = 0; C.ghost = true; if (!C.P) C.P = carPhysics(CARS[0]);
+  trafficTick(dt); peopleTick(dt); signalsUpdate();
+}
+const AERIAL = { az: 0, lookX: 0, lookZ: 0, dist: 420, el: 0.72, stop: 0, t: 0, god: false, drag: null };
+function aerialUpdate(dt) {
+  const A = AERIAL, L = MAP.landmarks;
+  if (G.mode === 'title') {
+    // a slow circuit over the sights, drifting from one to the next
+    const tour = ['美麗島', '八五大樓', '駁二', '中央公園', '高雄車站', '夢時代', '旗津', '龍虎塔'];
+    A.t += dt; const i = Math.floor(A.t / 16) % tour.length, k = (A.t % 16) / 16, from = L[tour[i]], to = L[tour[(i + 1) % tour.length]], e = k < 0.7 ? 0 : (k - 0.7) / 0.3, se = e * e * (3 - 2 * e);
+    A.lookX = lerp(from[0], to[0], se); A.lookZ = lerp(from[1], to[1], se); A.az += dt * 0.08; A.dist = 420; A.el = 0.62;
+  }
+  const cam = R3.cam, ce = Math.cos(A.el), px = A.lookX - Math.sin(A.az) * A.dist * ce, pz = A.lookZ - Math.cos(A.az) * A.dist * ce, py = A.dist * Math.sin(A.el);
+  cam.position.set(px, Math.max(py, groundHSafe(px, pz) + 12), pz); cam.lookAt(A.lookX, 0, A.lookZ); cam.fov = 48; cam.updateProjectionMatrix();
+  CAMV.az = A.az;
+}
+function groundHSafe(x, z) { try { return terrainH(clamp(x, 0, MAP.W), clamp(z, 0, MAP.W)); } catch (e) { return 0; } }
+function aerialEnter(god) {
+  G.mode = god ? 'god' : 'title'; AERIAL.god = !!god; r3FogRange(900, god ? 4200 : 2600);
+  if (god) { const L = MAP.landmarks.美麗島; AERIAL.lookX = L[0]; AERIAL.lookZ = L[1]; AERIAL.dist = 900; AERIAL.el = 0.9; AERIAL.az = Math.PI; }
+}
 function tick(dt) {
+  if (G.mode === 'title' || G.mode === 'god') { aerialTick(dt); return; }
   if (G.mode !== 'drive' || G.paused) return;
   G.t += dt;
   controlsUpdate(dt);
@@ -70,6 +97,15 @@ function onKerb() { CAMV.shake = Math.max(CAMV.shake, 0.3); sfxThud(0.4); }
 function onPersonHit() { CAMV.shake = Math.max(CAMV.shake, 0.4); sfxThud(0.7); hudMsg('撞到人了！', null, '#ff4f6d', 1.5); heatUp(25, '撞到行人'); }
 function render(dt) {
   if (G.mode === 'drive') { r3Update(CAMV.az); r3Frame(CAMV.fp ? 24 : CAMV.view === 'high' ? 10 : 16); drawHud(); }
+  else if ((G.mode === 'title' || G.mode === 'god') && R3.cam && MAP.landmarks) { aerialUpdate(dt); r3Update(CAMV.az); if (R3.car) R3.car.visible = false; if (R3.shadow) R3.shadow.visible = false; r3Frame(AERIAL.dist); if (G.mode === 'god') drawGodHud(); else hud.clearRect(0, 0, innerWidth, innerHeight); }
+}
+// the god's-eye map: the place and the scale, and how to move about
+function drawGodHud() {
+  const W = innerWidth, H = innerHeight; hud.clearRect(0, 0, W, H);
+  const n = nearestRoad(AERIAL.lookX, AERIAL.lookZ), nm = n && n.e.rd && n.e.rd.name ? n.e.rd.name : '';
+  let near = '', nd = 1e9; for (const k in MAP.landmarks) { const d = Math.hypot(MAP.landmarks[k][0] - AERIAL.lookX, MAP.landmarks[k][1] - AERIAL.lookZ); if (d < nd) { nd = d; near = k; } }
+  otext((nd < 400 ? near + '一帶' : '') + (nm ? '　' + nm : ''), 16, H - 54, 16, '#fff3dc', null, 'left', 'rgba(0,0,0,.6)', 3);
+  otext('拖曳移動・兩指縮放・' + Math.round(AERIAL.dist) + ' m', 16, H - 30, 13, '#ffd23a', null, 'left', 'rgba(0,0,0,.6)', 3);
 }
 // ---------- the HUD: speed, gear, revs, the minimap, the pads ----------
 function otext(str, x, y, size, fill, font, align, stroke, lw) { hud.font = (font && font.weight ? font.weight : '700') + ' ' + size + 'px ' + (font && font.family ? font.family : '"Russo One","Noto Sans TC",sans-serif'); hud.textAlign = align || 'left'; hud.textBaseline = 'alphabetic'; hud.lineJoin = 'round'; hud.lineWidth = lw || Math.max(2, size * 0.14); hud.strokeStyle = stroke || '#140c2a'; hud.strokeText(str, x, y); hud.fillStyle = fill; hud.fillText(str, x, y); }
@@ -118,7 +154,7 @@ function drawCockpit() {
 }
 // ---------- test hooks ----------
 window.__kh = {
-  G, CAR, CAMV, CTL, MAP, PROPS, R3, SET, CARS, CITY, ATLAS, setTod, startDrive, carToRoad, show, carPhysics, groundH, solidsNear, solidAt, nearestRoad, SOL, r3Cull, TR, TRF, PEO, MIS, PRO, WANT, heatUp, turn(ci, i) { return carTurnFrame(CARS[ci], i).toDataURL(); },
+  G, CAR, CAMV, CTL, MAP, PROPS, R3, SET, CARS, CITY, ATLAS, setTod, AERIAL, aerialEnter, startDrive, carToRoad, show, carPhysics, groundH, solidsNear, solidAt, nearestRoad, SOL, r3Cull, TR, TRF, PEO, MIS, PRO, WANT, heatUp, turn(ci, i) { return carTurnFrame(CARS[ci], i).toDataURL(); },
   halt(on) { G.halt = !!on; }, sim(sec, h) { h = h || 1 / 120; const n = Math.round(sec / h); for (let i = 0; i < n; i++) tick(h); return this.state(); },
   step(dt) { tick(dt); render(dt); return $('gl').toDataURL('image/png'); },
   state() { const C = CAR; return { x: +C.x.toFixed(1), z: +C.z.toFixed(1), yaw: +C.yaw.toFixed(2), kmh: Math.round(C.kmh), vy: +C.vy.toFixed(2), r: +C.r.toFixed(2), rpm: Math.round(C.rpm), gear: C.gear, surf: C.surface, slip: +C.slipK.toFixed(2), dmg: +C.damage.toFixed(2), fps: G.fps }; },

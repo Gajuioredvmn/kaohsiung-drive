@@ -482,7 +482,8 @@ function nearestRoad(x, z, yNow) {
   return best;
 }
 function buildMap() {
-  layoutMap(); paintKindsBase(); autoLanes(); clipRoadsToLand(); snapRoadEnds(); buildGraph();
+  const T = [], tm = (n) => T.push([n, Math.round(performance.now())]); MAP.prof = T; tm('start');
+  layoutMap(); tm('layout'); paintKindsBase(); tm('kindsBase'); autoLanes(); clipRoadsToLand(); tm('clip'); snapRoadEnds(); buildGraph(); tm('graph');
   for (const e of MAP.elev) { let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const [x, z] of e.pts) { x0 = Math.min(x0, x); z0 = Math.min(z0, z); x1 = Math.max(x1, x); z1 = Math.max(z1, z); } e.bb = [x0 - 12, z0 - 12, x1 + 12, z1 + 12]; }
-  buildFaces(); paintKindsRoads(); paintGround();
+  buildFaces(); tm('faces'); paintKindsRoads(); tm('kindsRoads'); paintGround(); tm('ground');
 }

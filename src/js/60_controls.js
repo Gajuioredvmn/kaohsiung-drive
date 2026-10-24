@@ -12,7 +12,25 @@ function layoutPads() {
   CTL.pads.up = { x: 18, y: H * 0.2, w: 110, h: 70 }; CTL.pads.dn = { x: 18, y: H * 0.2 + 82, w: 110, h: 70 };
 }
 const inR = (r, x, y) => r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+function godTouch(kind, id, x, y) {
+  const A = AERIAL, T = A.touches || (A.touches = new Map());
+  if (kind === 'down') { T.set(id, { x, y, x0: x, y0: y }); A.pinch0 = null; return; }
+  if (kind === 'up') { T.delete(id); A.pinch0 = null; return; }
+  const t = T.get(id); if (!t) return;
+  if (T.size >= 2) {
+    const [a, b] = [...T.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    if (id === [...T.keys()][0]) { t.x = x; t.y = y; } else { t.x = x; t.y = y; }
+    const d2 = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    if (A.pinch0 == null) A.pinch0 = d; else { A.dist = clamp(A.dist * (d / d2), 160, 4000); }
+    return;
+  }
+  const dx = x - t.x, dy = y - t.y; t.x = x; t.y = y;
+  const k = A.dist / innerHeight * 1.4, s = Math.sin(A.az), c = Math.cos(A.az);
+  A.lookX -= (dx * c - dy * s) * k; A.lookZ -= (-dx * s - dy * c) * k;
+  A.lookX = clamp(A.lookX, 0, MAP.W); A.lookZ = clamp(A.lookZ, 0, MAP.W);
+}
 function touchDown(id, x, y) {
+  if (G.mode === 'god') { godTouch('down', id, x, y); return; }
   if (G.mode !== 'drive' || G.paused) return;
   const P = CTL.pads;
   if (inR(P.pause, x, y)) { onPausePressed(); return; }
@@ -28,12 +46,13 @@ function touchDown(id, x, y) {
   if (y < innerHeight * 0.34 && x > innerWidth * 0.3 && x < innerWidth * 0.64) { CTL.touches.set(id, { kind: 'cam', x0: x, last: x, moved: 0 }); return; }
   CTL.touches.set(id, { kind: 'rest' });
 }
-function touchMove(id, x, y) { const t = CTL.touches.get(id); if (!t) return; if (t.kind === 'steer') t.x = x; if (t.kind === 'cam') { t.moved += Math.abs(x - t.last); if (t.moved > 24) { CAMV.off = clamp(CAMV.off + (x - t.last) * 0.0045, -2.6, 2.6); CAMV.dragging = true; } t.last = x; } }
-function touchUp(id) { const t = CTL.touches.get(id); CTL.touches.delete(id); if (t && t.kind === 'cam' && ![...CTL.touches.values()].some((q) => q.kind === 'cam')) CAMV.dragging = false; }
+function touchMove(id, x, y) { if (G.mode === 'god') { godTouch('move', id, x, y); return; } const t = CTL.touches.get(id); if (!t) return; if (t.kind === 'steer') t.x = x; if (t.kind === 'cam') { t.moved += Math.abs(x - t.last); if (t.moved > 24) { CAMV.off = clamp(CAMV.off + (x - t.last) * 0.0045, -2.6, 2.6); CAMV.dragging = true; } t.last = x; } }
+function touchUp(id) { if (G.mode === 'god') { godTouch('up', id); return; } const t = CTL.touches.get(id); CTL.touches.delete(id); if (t && t.kind === 'cam' && ![...CTL.touches.values()].some((q) => q.kind === 'cam')) CAMV.dragging = false; }
 const glEl = $('gl');
 glEl.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; glEl.setPointerCapture && glEl.setPointerCapture(e.pointerId); touchDown(e.pointerId, e.clientX, e.clientY); e.preventDefault(); });
 glEl.addEventListener('pointermove', (e) => touchMove(e.pointerId, e.clientX, e.clientY));
 glEl.addEventListener('pointerup', (e) => touchUp(e.pointerId)); glEl.addEventListener('pointercancel', (e) => touchUp(e.pointerId));
+glEl.addEventListener('wheel', (e) => { if (G.mode === 'god') { AERIAL.dist = clamp(AERIAL.dist * (e.deltaY > 0 ? 1.15 : 0.87), 160, 4000); e.preventDefault(); } }, { passive: false });
 addEventListener('keydown', (e) => {
   CTL.keys[e.code] = true;
   if (G.mode === 'drive') {

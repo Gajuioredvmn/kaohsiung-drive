@@ -6,6 +6,13 @@
 // tilt-shift band, a vignette and a warm grade.
 const R3 = { renderer: null, scene: null, cam: null, ground: null, car: null, carTex: null, carFrames: null, shadow: null, chunks: [], rt: null, post: null, w: 0, h: 0, pixelK: 1, tod: { tint: [1, 1, 1], sky: 0x9ec8f0, fog: 0xc8dcea, sun: [-0.6, 0.56, 0.57] }, drawn: 0 };
 const FOG_NEAR = 300, FOG_FAR = 1150;
+// the haze pulled back for the aerial views (the title's flight and the god's-eye map), and restored for driving
+function r3FogRange(near, far) {
+  R3.fogFar = far; if (R3.scene && R3.scene.fog) { R3.scene.fog.near = near; R3.scene.fog.far = far; }
+  const mats = [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.waterMat, R3.fxMesh && R3.fxMesh.material];
+  for (const m of mats) { const u = m && m.uniforms; if (!u) continue; if (u.fogNear) u.fogNear.value = near; if (u.fogFar) u.fogFar.value = far; }
+  if (R3.cam) { R3.cam.far = Math.max(2600, far * 1.6); R3.cam.updateProjectionMatrix(); }
+}
 // the sun's shadow map: everything lit asks it whether the sun reaches this spot (four taps, softened)
 const SHADOW_GLSL = `
   uniform sampler2D shadowMap; uniform float shadowOn; varying vec4 vShadow;
@@ -145,7 +152,7 @@ function r3ShadowInit() {
 }
 function r3ShadowMats() { return [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material].filter((m) => m && m.uniforms && m.uniforms.shadowOn); }
 function r3ShadowPass() {
-  const rd = R3.renderer, on = R3.shadowRT && SET.quality === 'high' && R3.sun.y > 0.15;
+  const rd = R3.renderer, on = R3.shadowRT && SET.quality === 'high' && R3.sun.y > 0.15 && G.mode === 'drive';
   for (const m of r3ShadowMats()) { m.uniforms.shadowOn.value = 0; m.uniforms.shadowMap.value = null; }   // (the map must not be bound while it is being drawn)
   if (!on) return;
   // the box of shadow sits ahead of the camera; its corner snaps to the map's texels so the edges do not crawl
@@ -182,7 +189,7 @@ const SKY_FS = `precision mediump float; uniform vec3 top, horizon, haze, sunDir
   void main() { float h = clamp(vDir.y, 0.0, 1.0); vec3 c = mix(haze, horizon, smoothstep(0.0, 0.08, h)); c = mix(c, top, smoothstep(0.05, 0.6, h));
     float s = max(0.0, dot(normalize(vDir), sunDir)); c += vec3(1.0, 0.85, 0.6) * pow(s, 18.0) * 0.35 + vec3(1.0, 0.95, 0.85) * pow(s, 200.0) * 0.9; gl_FragColor = vec4(c, 1.0); }`;
 function r3Sky() {
-  const geo = new THREE.SphereGeometry(2400, 32, 16), mat = new THREE.ShaderMaterial({ vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms: { top: { value: new THREE.Color(0x5a9ae0) }, horizon: { value: new THREE.Color(0xa8ccec) }, haze: { value: new THREE.Color(R3.tod.fog) }, sunDir: { value: R3.sun } }, side: THREE.BackSide, depthWrite: false, fog: false });
+  const geo = new THREE.SphereGeometry(9000, 32, 16), mat = new THREE.ShaderMaterial({ vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms: { top: { value: new THREE.Color(0x5a9ae0) }, horizon: { value: new THREE.Color(0xa8ccec) }, haze: { value: new THREE.Color(R3.tod.fog) }, sunDir: { value: R3.sun } }, side: THREE.BackSide, depthWrite: false, fog: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; m.renderOrder = -10; scene3Add(m); R3.sky = m; R3.scene.background = null;
 }
 // the time of day: the sky, the haze, the sun and the tint on everything (the lamps and headlights come on at night in r3FxUpdate)
@@ -257,7 +264,7 @@ function r3Cull() {
   const cam = R3.cam; cam.updateMatrixWorld(); R3.projView.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); R3.frustum.setFromProjectionMatrix(R3.projView);
   let drawn = 0;
   for (const e of R3.chunks) {
-    const d = Math.hypot(e.cx - cam.position.x, e.cz - cam.position.z) - e.r, far = d > FOG_FAR;
+    const d = Math.hypot(e.cx - cam.position.x, e.cz - cam.position.z) - e.r, far = d > (R3.fogFar || FOG_FAR);
     let vis = !far;
     if (vis) { R3.sphere.center.set(e.cx, e.hmax * 0.5, e.cz); R3.sphere.radius = e.r; vis = R3.frustum.intersectsSphere(R3.sphere); }
     for (const m of e.meshes) m.visible = vis;

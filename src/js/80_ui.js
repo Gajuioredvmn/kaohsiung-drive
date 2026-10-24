@@ -10,7 +10,7 @@ function uiInit() {
   <section class="scr" id="s-title">
     <div class="title-wrap"><div class="logo"><span class="logo-tc">港都漫遊</span><span class="logo-en">KAOHSIUNG DRIVE</span><span class="logo-yr">高雄・開放世界　HD-2D　第一階段</span></div>
       <div class="tap" id="tap">點一下開始　TAP TO START</div>
-      <div class="menu" id="menu" hidden><button class="btn big" data-go="select">選車出發</button><button class="btn" data-go="settings">設定</button></div></div>
+      <div class="menu" id="menu" hidden><button class="btn big" data-go="select">選車出發</button><button class="btn" data-act="god">俯瞰高雄</button><button class="btn" data-go="settings">設定</button></div></div>
     <div class="foot">左右傾斜手機轉向・右手油門煞車・畫面上方左右拖曳轉鏡頭</div>
   </section>
   <section class="scr dim" id="s-select" hidden>
@@ -22,6 +22,7 @@ function uiInit() {
       <div class="actions"><button class="btn ghost" data-go="title">返回</button><button class="btn big" data-act="go">出發！</button></div>
     </div>
   </section>
+  <section class="scr god" id="s-god" hidden><div class="godbar"><button class="btn" data-act="godback">回選單</button><button class="btn" data-act="godspin">轉一下</button></div></section>
   <section class="scr dim" id="s-settings" hidden><div class="panel card" id="settings"></div></section>
   <section class="scr dim" id="s-pause" hidden><div class="panel vmenu"><h2 class="ttl" style="text-align:center">暫停</h2><button class="btn big" data-act="resume">繼續</button><button class="btn" data-act="road">回到路上</button><button class="btn" data-act="quit">放棄任務</button><button class="btn" data-act="recenter">方向盤歸零</button><button class="btn" data-go="settings">設定</button><button class="btn ghost" data-act="title">回標題</button></div></section>`;
   document.body.appendChild(h('<div id="rot" class="need"><div style="font-size:44px">⟲</div>請把手機轉成橫向</div>'));
@@ -35,13 +36,16 @@ function show(name) {
   for (const s of document.querySelectorAll('#ui .scr')) s.hidden = s.id !== 's-' + name;
   if (name === 'select') openSelect(); else cancelAnimationFrame(UI.turnRaf);
   if (name === 'settings') openSettings();
-  $('ui').style.pointerEvents = name ? 'auto' : 'none';
+  $('ui').style.pointerEvents = name && name !== 'god' ? 'auto' : 'none';
 }
 function onUiClick(e) {
   const b = e.target.closest('button'); if (!b) return;
   if (!UI.unlocked) unlock();
   sfxUi();
-  if (b.dataset.go) { if (b.dataset.go === 'title' && G.mode === 'drive') { G.mode = 'title'; engineStop(); driveEnd(); } show(b.dataset.go); return; }
+  if (b.dataset.act === 'god') { aerialEnter(true); show('god'); return; }
+  if (b.dataset.act === 'godback') { aerialEnter(false); show('title'); return; }
+  if (b.dataset.act === 'godspin') { AERIAL.az += Math.PI / 4; return; }
+  if (b.dataset.go) { if (b.dataset.go === 'title' && G.mode === 'drive') { G.mode = 'title'; engineStop(); driveEnd(); aerialEnter(false); } show(b.dataset.go); return; }
   switch (b.dataset.act) {
     case 'prev': UI.sel = (UI.sel + CARS.length - 1) % CARS.length; openSelect(); break;
     case 'next': UI.sel = (UI.sel + 1) % CARS.length; openSelect(); break;
@@ -51,7 +55,7 @@ function onUiClick(e) {
     case 'resume': onPausePressed(); break;
     case 'road': carToRoad(); onPausePressed(); break;
     case 'recenter': tiltRecenter(); onPausePressed(); break;
-    case 'title': G.mode = 'title'; G.paused = false; engineStop(); driveEnd(); show('title'); break;
+    case 'title': G.paused = false; engineStop(); driveEnd(); aerialEnter(false); show('title'); break;
   }
 }
 // ---------- the showroom ----------

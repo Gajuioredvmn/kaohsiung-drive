@@ -40,6 +40,7 @@ button:focus-visible{outline:2px solid var(--sun);outline-offset:3px}
 #ui{position:fixed;inset:0;z-index:5;pointer-events:none}
 #ui .scr{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:auto;
   padding:max(10px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(10px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+#s-god{pointer-events:none;align-items:flex-start;justify-content:flex-end}#s-god .godbar{pointer-events:auto;display:flex;gap:8px;margin:12px 14px}
 #s-title{background:radial-gradient(ellipse at 50% 42%,rgba(10,6,24,.62),rgba(10,6,24,.18) 58%,rgba(10,6,24,0) 75%)}
 #ui .scr.dim{background:radial-gradient(ellipse at 50% 40%,rgba(18,12,42,.35),rgba(10,6,24,.82))}
 .panel{background:linear-gradient(180deg,rgba(28,16,64,.93),rgba(12,8,30,.95));border:2px solid var(--sun);border-radius:14px;
@@ -1614,7 +1615,7 @@ function trafficTick(dt) {
     }
     // the player, when on this vehicle's path ahead
     const dpx = C.x - v.x, dpz = C.z - v.z;
-    if (!v.cop && dpx * dpx + dpz * dpz < 70 * 70) {
+    if (!v.cop && !C.ghost && dpx * dpx + dpz * dpz < 70 * 70) {
       const n = nearestOnPts(path.pts, C.x, C.z);
       // a player who just sits there is, after a while, nudged past rather than waited on for ever
       const blocked = n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && n.s - v.s < 8 && v.v < 0.3 && pv < 0.5;
@@ -1678,7 +1679,7 @@ function trafficSpawn(r, minD) {
 }
 // the player against the traffic: two discs under the car against each vehicle's box; both feel it
 function trafficCollide(dt) {
-  const C = CAR, sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), rc = C.P.W * 0.5 * 0.9;
+  const C = CAR; if (C.ghost || !C.P) return; const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), rc = C.P.W * 0.5 * 0.9;
   for (const v of TR.veh) {
     const dx = v.x - C.x, dz = v.z - C.z; if (dx * dx + dz * dz > 100) continue;
     const c = Math.cos(v.yaw), sn = Math.sin(v.yaw), hx = v.W / 2, hz = v.L / 2, cx = v.x - sn * 0, cz = v.z - c * 0;
@@ -1818,7 +1819,7 @@ function peopleTick(dt) {
 }
 // a walker hit by the car is knocked over (and the car feels a bump)
 function peopleCollide() {
-  const C = CAR, sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), hl = C.P.L * 0.55, hw = C.P.W * 0.5;
+  const C = CAR; if (C.ghost || !C.P) return; const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), hl = C.P.L * 0.55, hw = C.P.W * 0.5;
   for (const w of PEO.list) {
     const dx = w.x - C.x, dz = w.z - C.z; if (dx * dx + dz * dz > 16 || w.knocked > 0) continue;
     const lu = dx * cy - dz * sy, lv = dx * sy + dz * cy;   // across, along the car
@@ -2310,9 +2311,10 @@ function nearestRoad(x, z, yNow) {
   return best;
 }
 function buildMap() {
-  layoutMap(); paintKindsBase(); autoLanes(); clipRoadsToLand(); snapRoadEnds(); buildGraph();
+  const T = [], tm = (n) => T.push([n, Math.round(performance.now())]); MAP.prof = T; tm('start');
+  layoutMap(); tm('layout'); paintKindsBase(); tm('kindsBase'); autoLanes(); clipRoadsToLand(); tm('clip'); snapRoadEnds(); buildGraph(); tm('graph');
   for (const e of MAP.elev) { let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const [x, z] of e.pts) { x0 = Math.min(x0, x); z0 = Math.min(z0, z); x1 = Math.max(x1, x); z1 = Math.max(z1, z); } e.bb = [x0 - 12, z0 - 12, x1 + 12, z1 + 12]; }
-  buildFaces(); paintKindsRoads(); paintGround();
+  buildFaces(); tm('faces'); paintKindsRoads(); tm('kindsRoads'); paintGround(); tm('ground');
 }
 
 // ===================== the city's atlas: every wall, shop front, sign, roof and road surface, painted in pixels =====================
@@ -3788,6 +3790,13 @@ function carBounce(nx, nz) {
 // tilt-shift band, a vignette and a warm grade.
 const R3 = { renderer: null, scene: null, cam: null, ground: null, car: null, carTex: null, carFrames: null, shadow: null, chunks: [], rt: null, post: null, w: 0, h: 0, pixelK: 1, tod: { tint: [1, 1, 1], sky: 0x9ec8f0, fog: 0xc8dcea, sun: [-0.6, 0.56, 0.57] }, drawn: 0 };
 const FOG_NEAR = 300, FOG_FAR = 1150;
+// the haze pulled back for the aerial views (the title's flight and the god's-eye map), and restored for driving
+function r3FogRange(near, far) {
+  R3.fogFar = far; if (R3.scene && R3.scene.fog) { R3.scene.fog.near = near; R3.scene.fog.far = far; }
+  const mats = [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.waterMat, R3.fxMesh && R3.fxMesh.material];
+  for (const m of mats) { const u = m && m.uniforms; if (!u) continue; if (u.fogNear) u.fogNear.value = near; if (u.fogFar) u.fogFar.value = far; }
+  if (R3.cam) { R3.cam.far = Math.max(2600, far * 1.6); R3.cam.updateProjectionMatrix(); }
+}
 // the sun's shadow map: everything lit asks it whether the sun reaches this spot (four taps, softened)
 const SHADOW_GLSL = `
   uniform sampler2D shadowMap; uniform float shadowOn; varying vec4 vShadow;
@@ -3927,7 +3936,7 @@ function r3ShadowInit() {
 }
 function r3ShadowMats() { return [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material].filter((m) => m && m.uniforms && m.uniforms.shadowOn); }
 function r3ShadowPass() {
-  const rd = R3.renderer, on = R3.shadowRT && SET.quality === 'high' && R3.sun.y > 0.15;
+  const rd = R3.renderer, on = R3.shadowRT && SET.quality === 'high' && R3.sun.y > 0.15 && G.mode === 'drive';
   for (const m of r3ShadowMats()) { m.uniforms.shadowOn.value = 0; m.uniforms.shadowMap.value = null; }   // (the map must not be bound while it is being drawn)
   if (!on) return;
   // the box of shadow sits ahead of the camera; its corner snaps to the map's texels so the edges do not crawl
@@ -3964,7 +3973,7 @@ const SKY_FS = `precision mediump float; uniform vec3 top, horizon, haze, sunDir
   void main() { float h = clamp(vDir.y, 0.0, 1.0); vec3 c = mix(haze, horizon, smoothstep(0.0, 0.08, h)); c = mix(c, top, smoothstep(0.05, 0.6, h));
     float s = max(0.0, dot(normalize(vDir), sunDir)); c += vec3(1.0, 0.85, 0.6) * pow(s, 18.0) * 0.35 + vec3(1.0, 0.95, 0.85) * pow(s, 200.0) * 0.9; gl_FragColor = vec4(c, 1.0); }`;
 function r3Sky() {
-  const geo = new THREE.SphereGeometry(2400, 32, 16), mat = new THREE.ShaderMaterial({ vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms: { top: { value: new THREE.Color(0x5a9ae0) }, horizon: { value: new THREE.Color(0xa8ccec) }, haze: { value: new THREE.Color(R3.tod.fog) }, sunDir: { value: R3.sun } }, side: THREE.BackSide, depthWrite: false, fog: false });
+  const geo = new THREE.SphereGeometry(9000, 32, 16), mat = new THREE.ShaderMaterial({ vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms: { top: { value: new THREE.Color(0x5a9ae0) }, horizon: { value: new THREE.Color(0xa8ccec) }, haze: { value: new THREE.Color(R3.tod.fog) }, sunDir: { value: R3.sun } }, side: THREE.BackSide, depthWrite: false, fog: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; m.renderOrder = -10; scene3Add(m); R3.sky = m; R3.scene.background = null;
 }
 // the time of day: the sky, the haze, the sun and the tint on everything (the lamps and headlights come on at night in r3FxUpdate)
@@ -4039,7 +4048,7 @@ function r3Cull() {
   const cam = R3.cam; cam.updateMatrixWorld(); R3.projView.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); R3.frustum.setFromProjectionMatrix(R3.projView);
   let drawn = 0;
   for (const e of R3.chunks) {
-    const d = Math.hypot(e.cx - cam.position.x, e.cz - cam.position.z) - e.r, far = d > FOG_FAR;
+    const d = Math.hypot(e.cx - cam.position.x, e.cz - cam.position.z) - e.r, far = d > (R3.fogFar || FOG_FAR);
     let vis = !far;
     if (vis) { R3.sphere.center.set(e.cx, e.hmax * 0.5, e.cz); R3.sphere.radius = e.r; vis = R3.frustum.intersectsSphere(R3.sphere); }
     for (const m of e.meshes) m.visible = vis;
@@ -4295,7 +4304,25 @@ function layoutPads() {
   CTL.pads.up = { x: 18, y: H * 0.2, w: 110, h: 70 }; CTL.pads.dn = { x: 18, y: H * 0.2 + 82, w: 110, h: 70 };
 }
 const inR = (r, x, y) => r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+function godTouch(kind, id, x, y) {
+  const A = AERIAL, T = A.touches || (A.touches = new Map());
+  if (kind === 'down') { T.set(id, { x, y, x0: x, y0: y }); A.pinch0 = null; return; }
+  if (kind === 'up') { T.delete(id); A.pinch0 = null; return; }
+  const t = T.get(id); if (!t) return;
+  if (T.size >= 2) {
+    const [a, b] = [...T.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    if (id === [...T.keys()][0]) { t.x = x; t.y = y; } else { t.x = x; t.y = y; }
+    const d2 = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    if (A.pinch0 == null) A.pinch0 = d; else { A.dist = clamp(A.dist * (d / d2), 160, 4000); }
+    return;
+  }
+  const dx = x - t.x, dy = y - t.y; t.x = x; t.y = y;
+  const k = A.dist / innerHeight * 1.4, s = Math.sin(A.az), c = Math.cos(A.az);
+  A.lookX -= (dx * c - dy * s) * k; A.lookZ -= (-dx * s - dy * c) * k;
+  A.lookX = clamp(A.lookX, 0, MAP.W); A.lookZ = clamp(A.lookZ, 0, MAP.W);
+}
 function touchDown(id, x, y) {
+  if (G.mode === 'god') { godTouch('down', id, x, y); return; }
   if (G.mode !== 'drive' || G.paused) return;
   const P = CTL.pads;
   if (inR(P.pause, x, y)) { onPausePressed(); return; }
@@ -4311,12 +4338,13 @@ function touchDown(id, x, y) {
   if (y < innerHeight * 0.34 && x > innerWidth * 0.3 && x < innerWidth * 0.64) { CTL.touches.set(id, { kind: 'cam', x0: x, last: x, moved: 0 }); return; }
   CTL.touches.set(id, { kind: 'rest' });
 }
-function touchMove(id, x, y) { const t = CTL.touches.get(id); if (!t) return; if (t.kind === 'steer') t.x = x; if (t.kind === 'cam') { t.moved += Math.abs(x - t.last); if (t.moved > 24) { CAMV.off = clamp(CAMV.off + (x - t.last) * 0.0045, -2.6, 2.6); CAMV.dragging = true; } t.last = x; } }
-function touchUp(id) { const t = CTL.touches.get(id); CTL.touches.delete(id); if (t && t.kind === 'cam' && ![...CTL.touches.values()].some((q) => q.kind === 'cam')) CAMV.dragging = false; }
+function touchMove(id, x, y) { if (G.mode === 'god') { godTouch('move', id, x, y); return; } const t = CTL.touches.get(id); if (!t) return; if (t.kind === 'steer') t.x = x; if (t.kind === 'cam') { t.moved += Math.abs(x - t.last); if (t.moved > 24) { CAMV.off = clamp(CAMV.off + (x - t.last) * 0.0045, -2.6, 2.6); CAMV.dragging = true; } t.last = x; } }
+function touchUp(id) { if (G.mode === 'god') { godTouch('up', id); return; } const t = CTL.touches.get(id); CTL.touches.delete(id); if (t && t.kind === 'cam' && ![...CTL.touches.values()].some((q) => q.kind === 'cam')) CAMV.dragging = false; }
 const glEl = $('gl');
 glEl.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; glEl.setPointerCapture && glEl.setPointerCapture(e.pointerId); touchDown(e.pointerId, e.clientX, e.clientY); e.preventDefault(); });
 glEl.addEventListener('pointermove', (e) => touchMove(e.pointerId, e.clientX, e.clientY));
 glEl.addEventListener('pointerup', (e) => touchUp(e.pointerId)); glEl.addEventListener('pointercancel', (e) => touchUp(e.pointerId));
+glEl.addEventListener('wheel', (e) => { if (G.mode === 'god') { AERIAL.dist = clamp(AERIAL.dist * (e.deltaY > 0 ? 1.15 : 0.87), 160, 4000); e.preventDefault(); } }, { passive: false });
 addEventListener('keydown', (e) => {
   CTL.keys[e.code] = true;
   if (G.mode === 'drive') {
@@ -4545,6 +4573,8 @@ function boot() {
   G.bootMs = { map: Math.round(t1 - t0), atlas: Math.round(t2 - t1), city: Math.round(t3 - t2), gl: Math.round(performance.now() - t3) };
   HUD.minimap = canvas(200, 200); const g = HUD.minimap.getContext('2d'); g.drawImage(MAP.ground, 0, 0, 200, 200);
   uiInit(); const ld = $('loading'); if (ld) ld.remove();
+  if (/halt/.test(location.hash)) G.halt = true;   // the test harness drives frames by hand
+  aerialEnter(false);
   requestAnimationFrame(frame);
 }
 // ---------- the drive ----------
@@ -4556,7 +4586,7 @@ function startDrive(carIdx) {
   trafficReset();
   r3CarSet(CARS[carIdx]); camReset();
   CTL.mode = SET.ctrl === 'tilt' && CTL.tilt.ok ? 'tilt' : 'touch'; layoutPads(); setTimeout(tiltRecenter, 300);
-  G.mode = 'drive'; G.paused = false; show(null);
+  G.mode = 'drive'; G.paused = false; show(null); r3FogRange(FOG_NEAR, FOG_FAR); CAR.ghost = false;
   if (AU.ctx) engineStart(CARS[carIdx].engine);
   hudMsg('高雄・港都', '自由行駛・停住時按住煞車就倒車・右上切換視角', '#ffd23a', 3);
 }
@@ -4571,7 +4601,32 @@ function frame(now) {
   tick(dt);
   render(dt);
 }
+// the city carries on under the aerial views: the traffic and people live round the spot the camera looks at
+function aerialTick(dt) {
+  G.t += dt; const C = CAR, A = AERIAL;
+  C.x = A.lookX; C.z = A.lookZ; C.vx = C.vy = 0; C.y = 0; C.ghost = true; if (!C.P) C.P = carPhysics(CARS[0]);
+  trafficTick(dt); peopleTick(dt); signalsUpdate();
+}
+const AERIAL = { az: 0, lookX: 0, lookZ: 0, dist: 420, el: 0.72, stop: 0, t: 0, god: false, drag: null };
+function aerialUpdate(dt) {
+  const A = AERIAL, L = MAP.landmarks;
+  if (G.mode === 'title') {
+    // a slow circuit over the sights, drifting from one to the next
+    const tour = ['美麗島', '八五大樓', '駁二', '中央公園', '高雄車站', '夢時代', '旗津', '龍虎塔'];
+    A.t += dt; const i = Math.floor(A.t / 16) % tour.length, k = (A.t % 16) / 16, from = L[tour[i]], to = L[tour[(i + 1) % tour.length]], e = k < 0.7 ? 0 : (k - 0.7) / 0.3, se = e * e * (3 - 2 * e);
+    A.lookX = lerp(from[0], to[0], se); A.lookZ = lerp(from[1], to[1], se); A.az += dt * 0.08; A.dist = 420; A.el = 0.62;
+  }
+  const cam = R3.cam, ce = Math.cos(A.el), px = A.lookX - Math.sin(A.az) * A.dist * ce, pz = A.lookZ - Math.cos(A.az) * A.dist * ce, py = A.dist * Math.sin(A.el);
+  cam.position.set(px, Math.max(py, groundHSafe(px, pz) + 12), pz); cam.lookAt(A.lookX, 0, A.lookZ); cam.fov = 48; cam.updateProjectionMatrix();
+  CAMV.az = A.az;
+}
+function groundHSafe(x, z) { try { return terrainH(clamp(x, 0, MAP.W), clamp(z, 0, MAP.W)); } catch (e) { return 0; } }
+function aerialEnter(god) {
+  G.mode = god ? 'god' : 'title'; AERIAL.god = !!god; r3FogRange(900, god ? 4200 : 2600);
+  if (god) { const L = MAP.landmarks.美麗島; AERIAL.lookX = L[0]; AERIAL.lookZ = L[1]; AERIAL.dist = 900; AERIAL.el = 0.9; AERIAL.az = Math.PI; }
+}
 function tick(dt) {
+  if (G.mode === 'title' || G.mode === 'god') { aerialTick(dt); return; }
   if (G.mode !== 'drive' || G.paused) return;
   G.t += dt;
   controlsUpdate(dt);
@@ -4592,6 +4647,15 @@ function onKerb() { CAMV.shake = Math.max(CAMV.shake, 0.3); sfxThud(0.4); }
 function onPersonHit() { CAMV.shake = Math.max(CAMV.shake, 0.4); sfxThud(0.7); hudMsg('撞到人了！', null, '#ff4f6d', 1.5); heatUp(25, '撞到行人'); }
 function render(dt) {
   if (G.mode === 'drive') { r3Update(CAMV.az); r3Frame(CAMV.fp ? 24 : CAMV.view === 'high' ? 10 : 16); drawHud(); }
+  else if ((G.mode === 'title' || G.mode === 'god') && R3.cam && MAP.landmarks) { aerialUpdate(dt); r3Update(CAMV.az); if (R3.car) R3.car.visible = false; if (R3.shadow) R3.shadow.visible = false; r3Frame(AERIAL.dist); if (G.mode === 'god') drawGodHud(); else hud.clearRect(0, 0, innerWidth, innerHeight); }
+}
+// the god's-eye map: the place and the scale, and how to move about
+function drawGodHud() {
+  const W = innerWidth, H = innerHeight; hud.clearRect(0, 0, W, H);
+  const n = nearestRoad(AERIAL.lookX, AERIAL.lookZ), nm = n && n.e.rd && n.e.rd.name ? n.e.rd.name : '';
+  let near = '', nd = 1e9; for (const k in MAP.landmarks) { const d = Math.hypot(MAP.landmarks[k][0] - AERIAL.lookX, MAP.landmarks[k][1] - AERIAL.lookZ); if (d < nd) { nd = d; near = k; } }
+  otext((nd < 400 ? near + '一帶' : '') + (nm ? '　' + nm : ''), 16, H - 54, 16, '#fff3dc', null, 'left', 'rgba(0,0,0,.6)', 3);
+  otext('拖曳移動・兩指縮放・' + Math.round(AERIAL.dist) + ' m', 16, H - 30, 13, '#ffd23a', null, 'left', 'rgba(0,0,0,.6)', 3);
 }
 // ---------- the HUD: speed, gear, revs, the minimap, the pads ----------
 function otext(str, x, y, size, fill, font, align, stroke, lw) { hud.font = (font && font.weight ? font.weight : '700') + ' ' + size + 'px ' + (font && font.family ? font.family : '"Russo One","Noto Sans TC",sans-serif'); hud.textAlign = align || 'left'; hud.textBaseline = 'alphabetic'; hud.lineJoin = 'round'; hud.lineWidth = lw || Math.max(2, size * 0.14); hud.strokeStyle = stroke || '#140c2a'; hud.strokeText(str, x, y); hud.fillStyle = fill; hud.fillText(str, x, y); }
@@ -4640,7 +4704,7 @@ function drawCockpit() {
 }
 // ---------- test hooks ----------
 window.__kh = {
-  G, CAR, CAMV, CTL, MAP, PROPS, R3, SET, CARS, CITY, ATLAS, setTod, startDrive, carToRoad, show, carPhysics, groundH, solidsNear, solidAt, nearestRoad, SOL, r3Cull, TR, TRF, PEO, MIS, PRO, WANT, heatUp, turn(ci, i) { return carTurnFrame(CARS[ci], i).toDataURL(); },
+  G, CAR, CAMV, CTL, MAP, PROPS, R3, SET, CARS, CITY, ATLAS, setTod, AERIAL, aerialEnter, startDrive, carToRoad, show, carPhysics, groundH, solidsNear, solidAt, nearestRoad, SOL, r3Cull, TR, TRF, PEO, MIS, PRO, WANT, heatUp, turn(ci, i) { return carTurnFrame(CARS[ci], i).toDataURL(); },
   halt(on) { G.halt = !!on; }, sim(sec, h) { h = h || 1 / 120; const n = Math.round(sec / h); for (let i = 0; i < n; i++) tick(h); return this.state(); },
   step(dt) { tick(dt); render(dt); return $('gl').toDataURL('image/png'); },
   state() { const C = CAR; return { x: +C.x.toFixed(1), z: +C.z.toFixed(1), yaw: +C.yaw.toFixed(2), kmh: Math.round(C.kmh), vy: +C.vy.toFixed(2), r: +C.r.toFixed(2), rpm: Math.round(C.rpm), gear: C.gear, surf: C.surface, slip: +C.slipK.toFixed(2), dmg: +C.damage.toFixed(2), fps: G.fps }; },
@@ -4658,7 +4722,7 @@ function uiInit() {
   <section class="scr" id="s-title">
     <div class="title-wrap"><div class="logo"><span class="logo-tc">港都漫遊</span><span class="logo-en">KAOHSIUNG DRIVE</span><span class="logo-yr">高雄・開放世界　HD-2D　第一階段</span></div>
       <div class="tap" id="tap">點一下開始　TAP TO START</div>
-      <div class="menu" id="menu" hidden><button class="btn big" data-go="select">選車出發</button><button class="btn" data-go="settings">設定</button></div></div>
+      <div class="menu" id="menu" hidden><button class="btn big" data-go="select">選車出發</button><button class="btn" data-act="god">俯瞰高雄</button><button class="btn" data-go="settings">設定</button></div></div>
     <div class="foot">左右傾斜手機轉向・右手油門煞車・畫面上方左右拖曳轉鏡頭</div>
   </section>
   <section class="scr dim" id="s-select" hidden>
@@ -4670,6 +4734,7 @@ function uiInit() {
       <div class="actions"><button class="btn ghost" data-go="title">返回</button><button class="btn big" data-act="go">出發！</button></div>
     </div>
   </section>
+  <section class="scr god" id="s-god" hidden><div class="godbar"><button class="btn" data-act="godback">回選單</button><button class="btn" data-act="godspin">轉一下</button></div></section>
   <section class="scr dim" id="s-settings" hidden><div class="panel card" id="settings"></div></section>
   <section class="scr dim" id="s-pause" hidden><div class="panel vmenu"><h2 class="ttl" style="text-align:center">暫停</h2><button class="btn big" data-act="resume">繼續</button><button class="btn" data-act="road">回到路上</button><button class="btn" data-act="quit">放棄任務</button><button class="btn" data-act="recenter">方向盤歸零</button><button class="btn" data-go="settings">設定</button><button class="btn ghost" data-act="title">回標題</button></div></section>`;
   document.body.appendChild(h('<div id="rot" class="need"><div style="font-size:44px">⟲</div>請把手機轉成橫向</div>'));
@@ -4683,13 +4748,16 @@ function show(name) {
   for (const s of document.querySelectorAll('#ui .scr')) s.hidden = s.id !== 's-' + name;
   if (name === 'select') openSelect(); else cancelAnimationFrame(UI.turnRaf);
   if (name === 'settings') openSettings();
-  $('ui').style.pointerEvents = name ? 'auto' : 'none';
+  $('ui').style.pointerEvents = name && name !== 'god' ? 'auto' : 'none';
 }
 function onUiClick(e) {
   const b = e.target.closest('button'); if (!b) return;
   if (!UI.unlocked) unlock();
   sfxUi();
-  if (b.dataset.go) { if (b.dataset.go === 'title' && G.mode === 'drive') { G.mode = 'title'; engineStop(); driveEnd(); } show(b.dataset.go); return; }
+  if (b.dataset.act === 'god') { aerialEnter(true); show('god'); return; }
+  if (b.dataset.act === 'godback') { aerialEnter(false); show('title'); return; }
+  if (b.dataset.act === 'godspin') { AERIAL.az += Math.PI / 4; return; }
+  if (b.dataset.go) { if (b.dataset.go === 'title' && G.mode === 'drive') { G.mode = 'title'; engineStop(); driveEnd(); aerialEnter(false); } show(b.dataset.go); return; }
   switch (b.dataset.act) {
     case 'prev': UI.sel = (UI.sel + CARS.length - 1) % CARS.length; openSelect(); break;
     case 'next': UI.sel = (UI.sel + 1) % CARS.length; openSelect(); break;
@@ -4699,7 +4767,7 @@ function onUiClick(e) {
     case 'resume': onPausePressed(); break;
     case 'road': carToRoad(); onPausePressed(); break;
     case 'recenter': tiltRecenter(); onPausePressed(); break;
-    case 'title': G.mode = 'title'; G.paused = false; engineStop(); driveEnd(); show('title'); break;
+    case 'title': G.paused = false; engineStop(); driveEnd(); aerialEnter(false); show('title'); break;
   }
 }
 // ---------- the showroom ----------
