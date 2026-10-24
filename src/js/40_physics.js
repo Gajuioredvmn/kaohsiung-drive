@@ -84,10 +84,14 @@ function carStep(dt) {
   const dLon = (P.m * C.aLon * P.h) / P.L, FzF = Math.max(0.05 * Wt, FzF0 - dLon), FzR = Math.max(0.05 * Wt, FzR0 + dLon);
   C.loadF = FzF / Wt;
   // ---- slip angles at each axle ----
-  const vxs = Math.max(Math.abs(C.vx), 0.3) * Math.sign(C.vx || 1);
+  // each axle's velocity in its wheel's own frame (the front wheel is turned by the steer angle); the slip angle is the
+  // lateral part against the magnitude of the rolling part, so it stays sane rolling backward too (a car nudged back off
+  // a wall used to get slip angles of ninety degrees, every tyre saturated sideways, and no drive left to pull away)
+  const cs0 = Math.cos(C.steer), sn0 = Math.sin(C.steer), vfy = C.vy + P.a * C.r;
+  const vFl = C.vx * cs0 + vfy * sn0, vFt = vfy * cs0 - C.vx * sn0;
   // at a crawl the slip angles mean little (the kinematic blend below steers the car), so they fade out, which also keeps the friction circle free for pulling away
   const lowK = clamp(Math.abs(C.vx) / 1.5, 0.1, 1);
-  const aF = (Math.atan2(C.vy + P.a * C.r, vxs) - C.steer) * lowK, aR = Math.atan2(C.vy - P.b * C.r, vxs) * lowK;
+  const aF = Math.atan2(vFt, Math.max(Math.abs(vFl), 0.3)) * lowK, aR = Math.atan2(C.vy - P.b * C.r, Math.max(Math.abs(C.vx), 0.3)) * lowK;
   // ---- longitudinal demand per axle: drive on the driven axle, brakes on both (60/40), handbrake locks the rear ----
   const Fb = P.brakeF * br * (C.vx < 0 ? -1 : 1);
   let FxF = -Fb * 0.62, FxR = -Fb * 0.38;
@@ -108,6 +112,7 @@ function carStep(dt) {
   // drag and rolling resistance, plus the ground's own drag (grass, sand, water)
   const v2 = C.vx * Math.abs(C.vx), Fdrag = -0.5 * 1.2 * P.cdA * v2 - P.rr * Wt * Math.sign(C.vx) * clamp(Math.abs(C.vx) * 4, 0, 1) - gdrag * Wt * Math.sign(C.vx) * clamp(Math.abs(C.vx), 0, 1);
   const ax = (Fx + Fdrag) / P.m + C.vy * C.r, ay = Fy / P.m - C.vx * C.r;
+  if (window.__dbgPhys) C.dbg = { aF, aR, kF, kR, FxFt, FyFt, FxRt, FyRt, Fx, Fy, Mz, Fdrive, Teng, rpm: C.rpm, Fdrag, steer: C.steer, lowK, FzF, FzR };
   C.aLon = (Fx + Fdrag) / P.m; C.aLat = Fy / P.m;
   C.vx += ax * dt; C.vy += ay * dt; C.r += (Mz / P.Iz) * dt;
   // the drift assist: once the tail is well out, the yaw is damped so a slide can be held and gathered up, not spun
