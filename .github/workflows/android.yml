@@ -1,0 +1,30 @@
+name: android
+on:
+  push:
+    branches: [main]
+    paths: ['index.html', 'android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+        with: { gradle-version: '8.9' }
+      - name: the game goes into the app's assets
+        run: mkdir -p android/app/src/main/assets && cp index.html android/app/src/main/assets/index.html
+      - name: build
+        run: cd android && gradle assembleDebug --no-daemon -q
+      - uses: actions/upload-artifact@v4
+        with: { name: KaohsiungDrive-apk, path: android/app/build/outputs/apk/debug/app-debug.apk }
+      - name: publish as the "apk" release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk KaohsiungDrive.apk
+          gh release view apk >/dev/null 2>&1 || gh release create apk KaohsiungDrive.apk -t "港都漫遊 Android 測試版" -n "每次更新自動建置的 APK。安裝前要在手機允許「安裝未知來源的應用程式」。"
+          gh release upload apk KaohsiungDrive.apk --clobber
+          gh release edit apk -n "每次更新自動建置的 APK（$(date -u +%Y-%m-%d\ %H:%M) UTC，commit ${GITHUB_SHA::7}）。安裝前要在手機允許「安裝未知來源的應用程式」。"

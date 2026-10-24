@@ -1,0 +1,7 @@
+node_modules/
+dist/
+test/
+android/app/src/main/assets/
+android/app/build/
+android/.gradle/
+android/build/
