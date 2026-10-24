@@ -23,7 +23,7 @@ function carPhysics(spec) {
   const final = (red / 60) * TAU * rw / (vtop * ratios[gearsN - 1]) / 1.05;
   const dragTop = 0.5 * 1.2 * cdA * vtop * vtop + rr * m * 9.81, pk = (dragTop * rw) / (ratios[gearsN - 1] * final) / 0.78;   // Nm at the engine, top gear at the redline is 78% of peak
   const Tpeak = pk * (1 + 0.55 * spec.acc);
-  return { m, L, W, a, b, h: 0.42 + 0.12 * (1 - spec.grip), Iz: m * (L * L + W * W) / 12 * 1.15, drive, mu: 0.88 + 0.32 * spec.grip, cs: 9 + 6 * spec.grip, cdA, rr, rw, red, idle: 950, ratios, final, Tpeak, brakeF: m * 9.81 * (1.05 + 0.25 * spec.grip), steerMax: (28 + 10 * spec.steer) * D2R, steerRate: 2.4 + 2.0 * spec.steer, engI: 0.25 };
+  return { m, L, W, a, b, h: 0.42 + 0.12 * (1 - spec.grip), Iz: m * (L * L + W * W) / 12 * 1.15, drive, mu: 1.06 + 0.3 * spec.grip, cs: 13 + 6 * spec.grip, cdA, rr, rw, red, idle: 950, ratios, final, Tpeak, brakeF: m * 9.81 * (1.05 + 0.25 * spec.grip), steerMax: (28 + 10 * spec.steer) * D2R, steerRate: 2.4 + 2.0 * spec.steer, engI: 0.25 };
 }
 function carSetup(spec, auto) {
   CAR.spec = spec; CAR.P = carPhysics(spec); CAR.auto = auto !== false;
@@ -119,7 +119,11 @@ function carStep(dt) {
   if (C.assist !== false) { const beta = Math.abs(Math.atan2(C.vy, Math.max(2, Math.abs(C.vx)))); if (beta > 0.25) { const k = clamp((beta - 0.25) / 0.5, 0, 1); C.r -= C.r * k * 2.2 * dt; if (Math.sign(C.steer) === -Math.sign(C.r) && Math.abs(C.steer) > 0.05) C.vy -= C.vy * k * 1.5 * dt; } }
   // at a crawl the slip model loses meaning: blend toward the kinematic bicycle (the rear axle rolls without slip)
   const slow = clamp(1 - Math.abs(C.vx) / 4, 0, 1);
-  if (slow > 0) { const rk = (C.vx * Math.tan(C.steer)) / P.L, vyk = rk * P.b; C.r = lerp(C.r, rk, slow); C.vy = lerp(C.vy, vyk, slow); }
+  { const rk = (C.vx * Math.tan(C.steer)) / P.L, vyk = rk * P.b;
+    if (slow > 0) { C.r = lerp(C.r, rk, slow); C.vy = lerp(C.vy, vyk, slow); }
+    // the arcade hand on the wheel: the body is pulled toward the line the wheels point along, as far as the grip allows,
+    // so the car tracks its steering instead of sliding wide (off when the handbrake is on, so a slide can still be thrown)
+    else if (C.hand < 0.5) { const lim = (P.mu * C.mu * 9.81 * 0.95) / Math.max(1, Math.abs(C.vx)), rkL = clamp(rk, -lim, lim), k = clamp(dt * 3.5, 0, 1); C.r = lerp(C.r, rkL, k); C.vy = lerp(C.vy, rkL * P.b, k); } }
   if (Math.abs(C.vx) < 0.15 && th < 0.05) { C.vx = 0; C.vy = 0; C.r = 0; }
   // ---- integrate the pose ----
   C.yaw += C.r * dt;
@@ -149,6 +153,8 @@ function propsCollide(dt) {
     const off = k === 0 ? C.P.a * 0.95 : -C.P.b * 0.95, px = C.x + sy * off, pz = C.z + cy * off;
     for (const s of near) {
       if (C.y > s.y0 + (s.h == null ? 100 : s.h) + 0.2 || C.y < s.y0 - 2.5) continue;   // above it (a deck over a street) or below it (a tunnel under a block)
+      // a thin post (a lamp, a signal pole, a bollard) is not a wall: at any pace the car bumps past it and loses a little speed
+      if (s.r != null && s.r <= 0.35 && Math.abs(C.vx) > 1.2) { const dx = px - s.x, dz = pz - s.z; if (dx * dx + dz * dz < (s.r + rc) * (s.r + rc)) { if (!s.bumpT || G.t - s.bumpT > 1) { s.bumpT = G.t; C.vx *= 0.9; if (typeof onCarHit === 'function') onCarHit(2.5); } } continue; }
       let nx, nz, pen;
       if (s.r != null) { const dx = px - s.x, dz = pz - s.z, d = Math.hypot(dx, dz), min = s.r + rc; if (d >= min) continue; nx = d > 1e-3 ? dx / d : 1; nz = d > 1e-3 ? dz / d : 0; pen = min - d; }
       else {

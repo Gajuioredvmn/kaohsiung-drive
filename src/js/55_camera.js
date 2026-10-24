@@ -8,7 +8,7 @@ function camUpdate(dt) {
   // (the heading and the direction of travel are blended as a wrapped difference, never across the ±180° seam, and a
   // car backing up keeps the view over its nose rather than swinging round)
   const vel = Math.hypot(C.vx, C.vy), movingYaw = vel > 2 && C.vx > 0 ? Math.atan2(C.vx * Math.sin(C.yaw) + C.vy * Math.cos(C.yaw), C.vx * Math.cos(C.yaw) - C.vy * Math.sin(C.yaw)) : C.yaw;
-  const want = C.yaw + clamp(angWrap(movingYaw - C.yaw), -0.8, 0.8) * 0.35;
+  const want = C.yaw + clamp(angWrap(movingYaw - C.yaw), -0.8, 0.8) * (CAMV.view === 'high' ? 0.25 : 0.1);
   CAMV.yawS += angWrap(want - CAMV.yawS) * clamp(dt * (CAMV.view === 'high' ? 3.2 : 6), 0, 1);
   if (!CAMV.dragging) { CAMV.off += (0 - CAMV.off) * clamp(dt * 1.2, 0, 1); }
   const az = CAMV.yawS + CAMV.off; CAMV.az = az;

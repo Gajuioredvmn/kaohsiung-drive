@@ -25,7 +25,7 @@ function touchDown(id, x, y) {
   if (!CAR.auto) { if (inR(P.up, x, y)) { carShift(CAR.gear + 1); return; } if (inR(P.dn, x, y)) { carShift(CAR.gear - 1); return; } }
   if (inR(P.steer, x, y)) { CTL.touches.set(id, { kind: 'steer', x0: x }); return; }
   // the camera swings only for a deliberate drag across the top of the screen; a thumb resting lower down does nothing
-  if (y < innerHeight * 0.42) { CTL.touches.set(id, { kind: 'cam', x0: x, last: x, moved: 0 }); return; }
+  if (y < innerHeight * 0.34 && x > innerWidth * 0.3 && x < innerWidth * 0.64) { CTL.touches.set(id, { kind: 'cam', x0: x, last: x, moved: 0 }); return; }
   CTL.touches.set(id, { kind: 'rest' });
 }
 function touchMove(id, x, y) { const t = CTL.touches.get(id); if (!t) return; if (t.kind === 'steer') t.x = x; if (t.kind === 'cam') { t.moved += Math.abs(x - t.last); if (t.moved > 24) { CAMV.off = clamp(CAMV.off + (x - t.last) * 0.0045, -2.6, 2.6); CAMV.dragging = true; } t.last = x; } }

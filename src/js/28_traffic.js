@@ -147,13 +147,14 @@ function trafficTick(dt) {
       // a player who just sits there is, after a while, nudged past rather than waited on for ever
       const blocked = n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && n.s - v.s < 8 && v.v < 0.3 && pv < 0.5;
       v.blockT = blocked ? (v.blockT || 0) + dt : 0;
-      if (n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && v.blockT < 3.5) { const g = n.s - v.s - (v.L + C.P.L) / 2; if (gap == null || g < gap) { gap = Math.max(0.05, g); const hx = Math.sin(n.yaw), hz = Math.cos(n.yaw); dv = v.v - (phx * hx + phz * hz); } }
+      if (n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && v.blockT < 2) { const g = n.s - v.s - (v.L + C.P.L) / 2; if (gap == null || g < gap) { gap = Math.max(0.05, g); const hx = Math.sin(n.yaw), hz = Math.cos(n.yaw); dv = v.v - (phx * hx + phz * hz); } }
       // a stopped or sideways player right in front: stop and lean on the horn
       if (gap != null && gap < 3 && v.v < 1 && pv < 1) { if (v.horn <= 0 && r() < dt * 0.3) { v.horn = 1.5; sfxHornFar(Math.hypot(dpx, dpz)); } }
     }
     if (v.horn > 0) v.horn -= dt;
     // the whoosh of something passing close by at speed
     { const rel = Math.abs(v.v - (phx * Math.sin(v.yaw) + phz * Math.cos(v.yaw))), dd = Math.sqrt(dpx * dpx + dpz * dpz); if (dd < 6 && rel > 8 && !v.passed) { v.passed = true; const side = Math.sign(dpx * (-Math.cos(C.yaw)) * -1 + dpz * Math.sin(C.yaw)); if (typeof sfxPass === 'function') sfxPass(clamp(rel / 30, 0.3, 1), -side, v.type === 'bus' ? 'bus' : v.type === 'truck' ? 'gravel' : 'car'); } else if (dd > 12) v.passed = false; }
+    if (v.shoved > 0) { v.shoved -= dt; if (gap != null && gap < 5) { gap = 5; dv = 0; } }   // just shoved by the player: keep rolling a moment
     const acc = idm(v, gap, dv);
     v.v = Math.max(0, v.v + clamp(acc, -6, 3) * dt); v.brake = acc < -0.8 ? 1 : 0;
     const vmaxHere = v.conn ? v.conn.vmax : v.lane.vmax; if (v.v > vmaxHere * 1.1) v.v = vmaxHere * 1.1;
@@ -217,6 +218,8 @@ function trafficCollide(dt) {
       let lnx, lnz, pen; if (d > 1e-3) { lnx = du / d; lnz = dv / d; pen = rc - d; } else { const toL = lu + hx, toR = hx - lu, toT = lv + hz, toB = hz - lv, m = Math.min(toL, toR, toT, toB); lnx = m === toL ? -1 : m === toR ? 1 : 0; lnz = m === toT ? -1 : m === toB ? 1 : 0; pen = m + rc; }
       const nx = lnx * c + lnz * sn, nz = -lnx * sn + lnz * c;
       C.x += nx * pen; C.z += nz * pen; carBounce(nx, nz);
+      // pushed from behind, the vehicle rolls on rather than sitting there (the way a jam gives way in an arcade city)
+      const fwd = (C.vx * sy) * Math.sin(v.yaw) + (C.vx * cy) * Math.cos(v.yaw); if (fwd > 0.3 && lv < 0 && !v.cop) { v.v = Math.max(v.v, Math.min(3, fwd)); v.shoved = 2; }
       v.v *= v.cop ? 0.85 : 0.6; if (v.horn <= 0) v.horn = 2; if (typeof onTrafficHit === 'function') onTrafficHit(v); if (typeof sfxHornFar === 'function' && Math.random() < 0.3) sfxHornFar(3);
     }
   }
