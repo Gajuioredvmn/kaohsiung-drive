@@ -4,28 +4,42 @@
 // per atlas, turned to face the camera in the vertex shader; the car is a quad showing the turntable frame nearest the
 // angle we see it at. The frame is then passed through the finish: bloom on the bright things, depth-of-field with a
 // tilt-shift band, a vignette and a warm grade.
-const R3 = { renderer: null, scene: null, cam: null, ground: null, car: null, carTex: null, carFrames: null, shadow: null, chunks: [], rt: null, post: null, w: 0, h: 0, pixelK: 1, tod: { tint: [1, 1, 1], sky: 0x9ec8f0, fog: 0xc8dcea, sun: [-0.5, 0.72, 0.48] }, drawn: 0 };
+const R3 = { renderer: null, scene: null, cam: null, ground: null, car: null, carTex: null, carFrames: null, shadow: null, chunks: [], rt: null, post: null, w: 0, h: 0, pixelK: 1, tod: { tint: [1, 1, 1], sky: 0x9ec8f0, fog: 0xc8dcea, sun: [-0.6, 0.56, 0.57] }, drawn: 0 };
 const FOG_NEAR = 300, FOG_FAR = 1150;
+// the sun's shadow map: everything lit asks it whether the sun reaches this spot (four taps, softened)
+const SHADOW_GLSL = `
+  uniform sampler2D shadowMap; uniform float shadowOn; varying vec4 vShadow;
+  float shadowAt(float nd) {
+    if (shadowOn < 0.5) return 1.0;
+    vec3 p = vShadow.xyz / vShadow.w * 0.5 + 0.5;
+    if (p.x < 0.001 || p.x > 0.999 || p.y < 0.001 || p.y > 0.999 || p.z > 1.0) return 1.0;
+    float bias = 0.0007 + 0.0015 * (1.0 - clamp(nd, 0.0, 1.0)); float z = p.z - bias; vec2 t = vec2(1.0 / 2048.0);
+    float s = step(z, texture2D(shadowMap, p.xy + t * vec2(-0.6, -0.6)).r) + step(z, texture2D(shadowMap, p.xy + t * vec2(0.6, -0.6)).r)
+            + step(z, texture2D(shadowMap, p.xy + t * vec2(-0.6, 0.6)).r) + step(z, texture2D(shadowMap, p.xy + t * vec2(0.6, 0.6)).r);
+    float edge = smoothstep(0.0, 0.08, min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y)));   // fades out at the map's rim
+    return mix(1.0, s * 0.25, edge);
+  }`;
 const BILLBOARD_VS = `
   attribute vec3 iPos; attribute vec2 iSize; attribute vec4 iUV; attribute float iFlip;
-  varying vec2 vUv; varying float vFog;
-  uniform vec3 camPos;
+  varying vec2 vUv; varying float vFog; varying vec4 vShadow;
+  uniform vec3 camPos; uniform mat4 shadowMat;
   void main() {
     vec3 toCam = camPos - iPos; toCam.y = 0.0; vec3 fwd = normalize(toCam); vec3 right = vec3(fwd.z, 0.0, -fwd.x);
     vec3 p = iPos + right * (position.x * iSize.x) + vec3(0.0, (position.y + 0.5) * iSize.y, 0.0);
     float u = iFlip > 0.5 ? 1.0 - uv.x : uv.x;
     vUv = vec2(mix(iUV.x, iUV.z, u), mix(iUV.y, iUV.w, uv.y));
+    vShadow = shadowMat * vec4(iPos + vec3(0.0, 0.4 + (position.y + 0.5) * iSize.y * 0.15, 0.0), 1.0);
     vec4 mv = modelViewMatrix * vec4(p, 1.0); vFog = -mv.z; gl_Position = projectionMatrix * mv;
   }`;
 const BILLBOARD_FS = `
   precision mediump float; uniform sampler2D map; uniform vec3 tint; uniform vec3 fogColor; uniform float fogNear, fogFar;
-  varying vec2 vUv; varying float vFog;
-  void main() { vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard; float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(c.rgb * tint, fogColor, f), 1.0); }`;
+  varying vec2 vUv; varying float vFog;` + SHADOW_GLSL + `
+  void main() { vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard; float sh = mix(0.5, 1.0, shadowAt(0.6)); float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(c.rgb * tint * sh, fogColor, f), 1.0); }`;
 // the city's shaders: a tile rectangle per vertex (or per box face), repeated with fract, lit by the sun direction
 // the tile repeats with fract(); the mip level comes from the unbroken uv, so the seams between repeats do not blur
 const CITY_FS = `
   precision mediump float; uniform sampler2D map; uniform vec3 tint, fogColor; uniform float fogNear, fogFar;
-  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying float vLight, vFog;
+  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying vec3 vLit; varying float vFog;` + SHADOW_GLSL + `
   void main() { vec2 sz = vTile.zw - vTile.xy; vec2 t = vTile.xy + fract(vUv) * sz;
     #ifdef USE_GRAD
     vec4 c = texture2DGradEXT(map, t, dFdx(vUv) * sz, dFdy(vUv) * sz);
@@ -33,17 +47,21 @@ const CITY_FS = `
     vec4 c = texture2D(map, t);
     #endif
     if (c.a < 0.5) discard;
-    vec3 col = c.rgb * vCol * vLight * tint; float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(col, fogColor, f), 1.0); }`;
+    // vLit: x the ambient part, y the sun's part (shadowed here), z the height above the wall's foot (occlusion)
+    float ao = 1.0 - 0.22 * (1.0 - smoothstep(0.0, 2.4, vLit.z));
+    float light = (vLit.x + vLit.y * shadowAt(vLit.y > 0.001 ? 1.0 : 0.0)) * ao;
+    vec3 col = c.rgb * vCol * light * tint; float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(col, fogColor, f), 1.0); }`;
 const GEO_VS = `
   attribute vec4 tile; attribute vec3 color;
-  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying float vLight, vFog;
-  uniform vec3 sunDir;
-  void main() { vUv = uv; vTile = tile; vCol = color; vLight = 0.58 + 0.42 * max(0.0, dot(normal, sunDir)) + 0.1 * normal.y;
+  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying vec3 vLit; varying float vFog; varying vec4 vShadow;
+  uniform vec3 sunDir; uniform mat4 shadowMat;
+  void main() { vUv = uv; vTile = tile; vCol = color; float nd = dot(normal, sunDir); vLit = vec3(0.4 + 0.1 * normal.y, 0.62 * max(0.0, nd), 10.0);
+    vShadow = shadowMat * vec4(position + normal * 0.25, 1.0);
     vec4 mv = modelViewMatrix * vec4(position, 1.0); vFog = -mv.z; gl_Position = projectionMatrix * mv; }`;
 const BOX_VS = `
   attribute vec3 iPos, iSize, iCol, iRep; attribute float iYaw, face; attribute vec4 iTF, iTS, iTT;
-  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying float vLight, vFog;
-  uniform vec3 sunDir;
+  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying vec3 vLit; varying float vFog; varying vec4 vShadow;
+  uniform vec3 sunDir; uniform mat4 shadowMat;
   void main() {
     vec3 ls = position * iSize; float s = sin(iYaw), c = cos(iYaw);
     vec3 wp = iPos + vec3(ls.x * c + ls.z * s, ls.y, -ls.x * s + ls.z * c);
@@ -55,8 +73,9 @@ const BOX_VS = `
     else if (f == 3) { uv2 = iRep.x > 0.0 ? vec2((1.0 + position.z) * iSize.z, position.y * iSize.y) / iRep.x : vec2(1.0 + position.z, position.y) * 0.998; vTile = iTS; }
     else { uv2 = iRep.y > 0.0 ? vec2((position.x + 0.5) * iSize.x, -position.z * iSize.z) / iRep.y : vec2(position.x + 0.5, -position.z) * 0.998; vTile = iTT; }
     vUv = uv2; vCol = iCol;
-    float light = 0.58 + 0.42 * max(0.0, dot(wn, sunDir)) + 0.1 * wn.y; if (f == 5) light *= 0.3;
-    vLight = light;
+    float nd = dot(wn, sunDir), under = f == 5 ? 0.3 : 1.0;
+    vLit = vec3((0.44 + 0.1 * wn.y) * under, 0.58 * max(0.0, nd) * under, f == 4 ? 10.0 : ls.y);
+    vShadow = shadowMat * vec4(wp + wn * 0.3, 1.0);
     vec4 mv = modelViewMatrix * vec4(wp, 1.0); vFog = -mv.z; gl_Position = projectionMatrix * mv;
   }`;
 function r3Init() {
@@ -67,7 +86,7 @@ function r3Init() {
   scene.fog = new THREE.Fog(R3.tod.fog, FOG_NEAR, FOG_FAR); scene.background = new THREE.Color(R3.tod.sky);
   R3.cam = new THREE.PerspectiveCamera(42, 16 / 9, 0.6, 2600);
   R3.sun = new THREE.Vector3(...R3.tod.sun).normalize();
-  r3Ground(); r3Sky(); r3Atlas(); r3City(); r3Props(); r3Traffic(); r3Shadow(); r3Marks();
+  r3ShadowInit(); r3Ground(); r3Water(); r3Sky(); r3Atlas(); r3City(); r3Props(); r3Traffic(); r3Shadow(); r3Marks();
   for (const m of CITY.meshes || []) scene.add(m);
   // the finish needs a depth texture: WebGL2 (every modern phone); otherwise the plain picture
   if (rd.capabilities.isWebGL2) { try { r3Post(); } catch (e) { R3.post = null; reportErr('post: ' + e.message); } } else R3.postOff = 'WebGL1';
@@ -80,14 +99,78 @@ function r3Resize() {
   R3.renderer.setSize(R3.w, R3.h, false); R3.cam.aspect = W / H; R3.cam.updateProjectionMatrix();
   if (R3.post) r3PostResize();
 }
+// ---------- the water: a sheet over the harbour and the lake, a ribbon down the river; ripples and the sun's glitter ----------
+const WATER_VS = `
+  varying vec3 vW; varying float vFog;
+  void main() { vec4 wp = modelMatrix * vec4(position, 1.0); vW = wp.xyz; vec4 mv = viewMatrix * wp; vFog = -mv.z; gl_Position = projectionMatrix * mv; }`;
+const WATER_FS = `
+  precision mediump float; uniform vec3 tint, fogColor, sunDir, camPos, deep, shallow, skyCol; uniform float fogNear, fogFar, t;
+  varying vec3 vW; varying float vFog;
+  void main() {
+    vec2 p = vW.xz;
+    float w1 = sin(p.x * 0.35 + p.y * 0.21 + t * 1.3) + sin(p.x * 0.11 - p.y * 0.27 + t * 0.9), w2 = sin(p.x * 0.9 - p.y * 0.6 - t * 2.1) * 0.5 + sin(p.y * 1.3 + t * 1.7) * 0.3;
+    float w3 = sin(p.x * 2.3 + p.y * 1.7 + t * 3.1) * 0.5; vec3 n = normalize(vec3(w1 * 0.22 + w2 * 0.18 + w3 * 0.1, 1.0, w1 * 0.18 - w2 * 0.22 - w3 * 0.1));
+    vec3 v = normalize(camPos - vW), h = normalize(v + sunDir);
+    float fres = pow(1.0 - max(0.0, dot(n, v)), 3.0), spec = pow(max(0.0, dot(n, h)), 180.0) * 1.6 + pow(max(0.0, dot(n, h)), 24.0) * 0.12;
+    vec3 col = mix(deep, shallow, 0.5 + 0.5 * w1 * 0.35) * (0.7 + 0.5 * max(0.0, dot(n, sunDir)));
+    col = mix(col, skyCol, fres * 0.55) + vec3(1.0, 0.97, 0.9) * spec * clamp(sunDir.y * 2.0, 0.0, 1.0);
+    float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(col * tint, fogColor, f), 1.0); }`;
+function r3Water() {
+  const shapes = [];
+  for (const poly of MAP.water) { const sh = new THREE.Shape(); poly.forEach(([x, z], i) => (i ? sh.lineTo(x, z) : sh.moveTo(x, z))); shapes.push([sh, -0.95]); }
+  // the river as a ribbon
+  { const pts = MAP.river, off = polyOffsets(pts, 23), sh = new THREE.Shape(); off.L.forEach(([x, z], i) => (i ? sh.lineTo(x, z) : sh.moveTo(x, z))); off.R.slice().reverse().forEach(([x, z]) => sh.lineTo(x, z)); shapes.push([sh, -2.05]); }
+  const mat = new THREE.ShaderMaterial({ vertexShader: WATER_VS, fragmentShader: WATER_FS, uniforms: { tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, sunDir: { value: R3.sun }, camPos: { value: new THREE.Vector3() }, t: { value: 0 }, deep: { value: new THREE.Color(0x2a7ec0) }, shallow: { value: new THREE.Color(0x58c0dc) }, skyCol: { value: new THREE.Color(0xa8ccec) } } });
+  R3.waterMat = mat; R3.water = [];
+  for (const [sh, y] of shapes) { const geo = new THREE.ShapeGeometry(sh, 1); geo.rotateX(Math.PI / 2); const m = new THREE.Mesh(geo, mat); m.position.y = y; m.frustumCulled = false; scene3Add(m); R3.water.push(m); }
+}
 // ---------- the ground ----------
+const GROUND_VS = `
+  varying vec2 vUv; varying vec3 vLit; varying float vFog; varying vec4 vShadow; uniform vec3 sunDir; uniform mat4 shadowMat;
+  void main() { vUv = uv; vec4 wp = modelMatrix * vec4(position, 1.0); float nd = dot(normalize(normal), sunDir); vLit = vec3(0.42, 0.62 * max(0.0, nd), 10.0);
+    vShadow = shadowMat * vec4(wp.xyz + vec3(0.0, 0.2, 0.0), 1.0); vec4 mv = viewMatrix * wp; vFog = -mv.z; gl_Position = projectionMatrix * mv; }`;
+const GROUND_FS = `
+  precision mediump float; uniform sampler2D map; uniform vec3 tint, fogColor; uniform float fogNear, fogFar;
+  varying vec2 vUv; varying vec3 vLit; varying float vFog;` + SHADOW_GLSL + `
+  void main() { vec4 c = texture2D(map, vUv); float light = vLit.x + vLit.y * shadowAt(1.0);
+    vec3 col = c.rgb * light * tint; float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(col, fogColor, f), 1.0); }`;
+// the sun's shadow map: a depth picture from the sun over the ground round the car, redrawn every frame
+const SHADOW_SIZE = 2048, SHADOW_R = 190;
+function shadowUni() { return { shadowMap: { value: R3.shadowRT ? R3.shadowRT.depthTexture : null }, shadowMat: { value: R3.shadowMat || (R3.shadowMat = new THREE.Matrix4()) }, shadowOn: { value: 0 } }; }
+function r3ShadowInit() {
+  if (!R3.renderer.capabilities.isWebGL2) return;
+  const rt = new THREE.WebGLRenderTarget(SHADOW_SIZE, SHADOW_SIZE, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true });
+  rt.depthTexture = new THREE.DepthTexture(SHADOW_SIZE, SHADOW_SIZE); rt.depthTexture.type = THREE.UnsignedIntType; rt.depthTexture.minFilter = THREE.NearestFilter; rt.depthTexture.magFilter = THREE.NearestFilter;
+  R3.shadowRT = rt; R3.sunCam = new THREE.OrthographicCamera(-SHADOW_R, SHADOW_R, SHADOW_R, -SHADOW_R, 10, 1500); R3.shadowMat = R3.shadowMat || new THREE.Matrix4();
+}
+function r3ShadowMats() { return [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material].filter((m) => m && m.uniforms && m.uniforms.shadowOn); }
+function r3ShadowPass() {
+  const rd = R3.renderer, on = R3.shadowRT && SET.quality === 'high' && R3.sun.y > 0.15;
+  for (const m of r3ShadowMats()) { m.uniforms.shadowOn.value = 0; m.uniforms.shadowMap.value = null; }   // (the map must not be bound while it is being drawn)
+  if (!on) return;
+  // the box of shadow sits ahead of the camera; its corner snaps to the map's texels so the edges do not crawl
+  const C = CAR, cam = R3.cam, look = Math.atan2(cam.position.x - C.x, cam.position.z - C.z) + Math.PI, texel = (2 * SHADOW_R) / SHADOW_SIZE;
+  let fx = C.x + Math.sin(look) * SHADOW_R * 0.45, fz = C.z + Math.cos(look) * SHADOW_R * 0.45; fx = Math.round(fx / texel) * texel; fz = Math.round(fz / texel) * texel;
+  const sc = R3.sunCam, S = R3.sun; sc.position.set(fx + S.x * 700, S.y * 700, fz + S.z * 700); sc.lookAt(fx, 0, fz); sc.updateMatrixWorld(); sc.updateProjectionMatrix();
+  R3.shadowMat.multiplyMatrices(sc.projectionMatrix, sc.matrixWorldInverse);
+  // what the sun sees: the chunks round the box, the props, the traffic and the people; not the sky, the car's quad or the glows
+  const hidden = [R3.sky, R3.car, R3.shadow, R3.fxMesh, R3.marks, ...(R3.water || [])].filter((m) => m); const was = hidden.map((m) => m.visible); for (const m of hidden) m.visible = false;
+  for (const e of R3.chunks) { const d = Math.hypot(e.cx - fx, e.cz - fz) - e.r; const vis = d < SHADOW_R * 1.3; for (const m of e.meshes) m.visible = vis; }
+  for (const m of [R3.propMesh, R3.trafficMesh, R3.peopleMesh]) if (m) m.material.uniforms.camPos.value.copy(sc.position);
+  const fogWas = R3.scene.fog; R3.scene.fog = null;
+  rd.setRenderTarget(R3.shadowRT); rd.clear(); rd.render(R3.scene, sc); rd.setRenderTarget(null);
+  R3.scene.fog = fogWas;
+  hidden.forEach((m, i) => { m.visible = was[i]; });
+  for (const m of [R3.propMesh, R3.trafficMesh, R3.peopleMesh]) if (m) m.material.uniforms.camPos.value.copy(cam.position);
+  for (const m of r3ShadowMats()) { m.uniforms.shadowOn.value = 1; m.uniforms.shadowMap.value = R3.shadowRT.depthTexture; }
+}
 function r3Ground() {
   const N = 300, W = MAP.W, geo = new THREE.PlaneGeometry(W, W, N, N); geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) { const x = pos.getX(i) + W / 2, z = pos.getZ(i) + W / 2; const k = groundKind(x, z); pos.setY(i, k === GK.water ? (riverDist(x, z) < 30 ? -2.4 : -1.2) : terrainH(x, z)); }
   geo.computeVertexNormals();
   const tex = new THREE.CanvasTexture(MAP.ground); tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-  const mat = new THREE.MeshLambertMaterial({ map: tex });
+  const mat = new THREE.ShaderMaterial({ vertexShader: GROUND_VS, fragmentShader: GROUND_FS, uniforms: { map: { value: tex }, sunDir: { value: R3.sun }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, ...shadowUni() } });
   const m = new THREE.Mesh(geo, mat); m.position.set(W / 2, 0, W / 2); scene3Add(m); R3.ground = m;
   const sun = new THREE.DirectionalLight(0xfff0d8, 1.0); sun.position.set(R3.tod.sun[0] * 500, R3.tod.sun[1] * 500, R3.tod.sun[2] * 500); scene3Add(sun); R3.sunLight = sun;
   R3.ambLight = new THREE.AmbientLight(0xc0d0e8, 1.0); scene3Add(R3.ambLight);
@@ -104,7 +187,7 @@ function r3Sky() {
 }
 // the time of day: the sky, the haze, the sun and the tint on everything (the lamps and headlights come on at night in r3FxUpdate)
 const TODS = {
-  day: { top: 0x5a9ae0, horizon: 0xa8ccec, fog: 0xc8dcea, tint: [1, 1, 1], sun: [-0.5, 0.72, 0.48], sunI: 1.0, sunC: 0xfff0d8, amb: 1.0, ambC: 0xc0d0e8 },
+  day: { top: 0x5a9ae0, horizon: 0xa8ccec, fog: 0xc8dcea, tint: [1, 1, 1], sun: [-0.45, 0.5, 0.74], sunI: 1.0, sunC: 0xfff0d8, amb: 1.0, ambC: 0xc0d0e8 },
   dusk: { top: 0x3a4a8a, horizon: 0xf0a070, fog: 0xe8b090, tint: [1.0, 0.84, 0.7], grade: [0.95, 0.82, 0.72], sun: [-0.85, 0.2, 0.48], sunI: 0.8, sunC: 0xffb070, amb: 0.75, ambC: 0xa090b0 },
   night: { top: 0x060a1c, horizon: 0x18203a, fog: 0x10162a, tint: [0.42, 0.46, 0.6], grade: [0.38, 0.42, 0.62], sun: [0.3, 0.6, 0.4], sunI: 0.25, sunC: 0x8090c0, amb: 0.55, ambC: 0x5a6a90 },
 };
@@ -115,13 +198,14 @@ function setTod(kind) {
   if (R3.sky) { const u = R3.sky.material.uniforms; u.top.value.setHex(T.top); u.horizon.value.setHex(T.horizon); u.haze.value.setHex(T.fog); }
   if (R3.sunLight) { R3.sunLight.intensity = T.sunI; R3.sunLight.color.setHex(T.sunC); R3.sunLight.position.set(T.sun[0] * 500, T.sun[1] * 500, T.sun[2] * 500); }
   if (R3.ambLight) { R3.ambLight.intensity = T.amb; R3.ambLight.color.setHex(T.ambC); }
-  for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material]) { const u = m && m.uniforms; if (!u) continue; if (u.tint) u.tint.value.set(T.tint[0], T.tint[1], T.tint[2]); if (u.fogColor) u.fogColor.value.setHex(T.fog); }
+  for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material]) { const u = m && m.uniforms; if (!u) continue; if (u.tint) u.tint.value.set(T.tint[0], T.tint[1], T.tint[2]); if (u.fogColor) u.fogColor.value.setHex(T.fog); }
   if (R3.fxMesh) R3.fxMesh.material.uniforms.fogColor.value.setHex(T.fog);
+  if (R3.waterMat) { const u = R3.waterMat.uniforms; u.fogColor.value.setHex(T.fog); u.skyCol.value.setHex(T.horizon); u.tint.value.set(T.tint[0], T.tint[1], T.tint[2]); }
   // the darkness goes into the post pass's grade; without the post pass (quality off) the tint carries it instead
   const g = T.grade || R3.gradeDay; if (R3.post && R3.post.comp) R3.post.comp.uniforms.grade.value.set(g[0], g[1], g[2]);
   if (R3.fxMesh) { const u = R3.fxMesh.material.uniforms; if (u.tint) u.tint.value.set(Math.min(2.6, 1 / g[0]), Math.min(2.6, 1 / g[1]), Math.min(2.6, 1 / g[2])); }   // the glows stay bright through the grade
-  if (SET.quality === 'off' || R3.postFail) for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material]) { const u = m && m.uniforms; if (u && u.tint) u.tint.value.set(T.tint[0] * g[0] / R3.gradeDay[0], T.tint[1] * g[1] / R3.gradeDay[1], T.tint[2] * g[2] / R3.gradeDay[2]); }
-  if (R3.ground) { R3.ground.material.color.setRGB(T.tint[0], T.tint[1], T.tint[2]); }
+  if (SET.quality === 'off' || R3.postFail) for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material]) { const u = m && m.uniforms; if (u && u.tint) u.tint.value.set(T.tint[0] * g[0] / R3.gradeDay[0], T.tint[1] * g[1] / R3.gradeDay[1], T.tint[2] * g[2] / R3.gradeDay[2]); }
+
 }
 // ---------- the city: the atlas, one flat mesh and one box mesh per chunk ----------
 function r3Atlas() {
@@ -129,7 +213,7 @@ function r3Atlas() {
   let src = ATLAS.canvas; if (maxTex < ATLAS.W) { const c = canvas(maxTex, maxTex); c.getContext('2d').drawImage(src, 0, 0, maxTex, maxTex); src = c; }
   const tex = new THREE.CanvasTexture(src); tex.magFilter = THREE.NearestFilter; tex.minFilter = gl2 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; tex.generateMipmaps = gl2; tex.anisotropy = Math.min(4, R3.renderer.capabilities.getMaxAnisotropy()); tex.colorSpace = THREE.SRGBColorSpace;
   R3.atlas = tex;
-  const uni = () => ({ map: { value: tex }, sunDir: { value: R3.sun }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR } });
+  const uni = () => ({ map: { value: tex }, sunDir: { value: R3.sun }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, ...shadowUni() });
   const defs = gl2 ? { USE_GRAD: '' } : {};
   R3.geoMat = new THREE.ShaderMaterial({ vertexShader: GEO_VS, fragmentShader: CITY_FS, uniforms: uni(), side: THREE.DoubleSide, defines: defs });
   R3.topMat = new THREE.ShaderMaterial({ vertexShader: GEO_VS, fragmentShader: CITY_FS, uniforms: uni(), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, defines: defs });
@@ -192,7 +276,7 @@ function r3Props() {
   PROPS.list.forEach((p, i) => { const K = PROPS.kinds[p.k]; pos[i * 3] = p.x; pos[i * 3 + 1] = p.y - 0.05; pos[i * 3 + 2] = p.z; size[i * 2] = K.wM * p.s; size[i * 2 + 1] = K.hM * p.s; uv.set(K.uv, i * 4); flip[i] = p.flip ? 1 : 0; });
   const geo = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); geo.instanceCount = n;
   geo.setAttribute('iPos', new THREE.InstancedBufferAttribute(pos, 3)); geo.setAttribute('iSize', new THREE.InstancedBufferAttribute(size, 2)); geo.setAttribute('iUV', new THREE.InstancedBufferAttribute(uv, 4)); geo.setAttribute('iFlip', new THREE.InstancedBufferAttribute(flip, 1));
-  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR } }, transparent: false });
+  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.propMesh = m; R3.propUV = geo.getAttribute('iUV'); R3.propTex = tex;
   // the walkers: the same atlas, a mesh of their own whose instances move
   const N = PEO.max, g2 = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g2.instanceCount = 0;
@@ -262,7 +346,7 @@ function r3Traffic() {
   const A = { pos: new THREE.InstancedBufferAttribute(pos, 3), size: new THREE.InstancedBufferAttribute(size, 2), uv: new THREE.InstancedBufferAttribute(uv, 4), flip: new THREE.InstancedBufferAttribute(flip, 1) };
   for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('iPos', A.pos); geo.setAttribute('iSize', A.size); geo.setAttribute('iUV', A.uv); geo.setAttribute('iFlip', A.flip);
-  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR } }, transparent: false });
+  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.trafficMesh = m; R3.trafficA = A;
 }
 function r3TrafficUpdate() {
@@ -324,7 +408,7 @@ const COMP_FS = `precision mediump float; uniform sampler2D tex, blur, bloom, de
     float tilt = smoothstep(0.4, 0.5, abs(vUv.y - 0.5));
     float k = clamp(coc * 0.7 + tilt * 0.3, 0.0, 1.0);
     vec3 c = mix(sharp.rgb, soft.rgb, k) + texture2D(bloom, vUv).rgb * 0.5;
-    c *= grade; vec2 q = (vUv - 0.5) * vec2(aspect, 1.0); c *= 1.0 - dot(q, q) * 0.5;
+    c *= grade; c = mix(vec3(dot(c, vec3(0.3, 0.59, 0.11))), c, 1.18); vec2 q = (vUv - 0.5) * vec2(aspect, 1.0); c *= 1.0 - dot(q, q) * 0.5;
     gl_FragColor = vec4(pow(max(c, 0.0), vec3(1.0 / 2.2)), 1.0); }`;
 function r3Post() {
   const mk = (w, h, depth) => { const rt = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter }); if (depth) { rt.depthTexture = new THREE.DepthTexture(w, h); rt.depthTexture.type = THREE.UnsignedIntType; } return rt; };
@@ -343,7 +427,7 @@ function r3PostResize() {
 function r3Pass(mat, from, to, dir, w, h) { const P = R3.post; mat.uniforms.tex.value = from.texture; if (dir) mat.uniforms.dir.value.set(dir[0] / w, dir[1] / h); P.quad.material = mat; R3.renderer.setRenderTarget(to); R3.renderer.render(P.scene, P.cam); }
 function r3Frame(focusDist) {
   const rd = R3.renderer, P = R3.post;
-  r3Cull();
+  r3ShadowPass(); r3Cull();
   if (!P || SET.quality === 'off' || R3.postFail) { rd.setRenderTarget(null); rd.render(R3.scene, R3.cam); return; }
   try { r3FrameFX(focusDist); } catch (e) { R3.postFail = true; reportErr('fx: ' + e.message); rd.setRenderTarget(null); rd.render(R3.scene, R3.cam); }
 }
@@ -368,6 +452,7 @@ function r3Update(camYaw) {
     R3.shadow.position.set(C.x, C.y + 0.02, C.z); R3.shadow.rotation.y = C.yaw - Math.PI / 2;
   }
   R3.propMesh.material.uniforms.camPos.value.copy(R3.cam.position);
+  if (R3.waterMat) { R3.waterMat.uniforms.camPos.value.copy(R3.cam.position); R3.waterMat.uniforms.t.value = G.t; }
   if (R3.sky) R3.sky.position.copy(R3.cam.position);
   r3TrafficUpdate(); r3PeopleUpdate(); r3FxUpdate();
   if (CITY.wheel) CITY.wheel.rotation.z += 0.0025;

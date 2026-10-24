@@ -195,7 +195,9 @@ function buildLandmarks() {
   CITY.stats.sites = CITY.sites.length;
 }
 // ---------- trees: the parks, the hill, the river banks, the odd yard ----------
+function buildClouds() { const r = mulberry(404); for (let k = 0; k < 70; k++) addProp('cloud' + r.int(0, 3), r() * MAP.W, r() * MAP.W, { s: 3 + r() * 2.5, y: 560 + r() * 140, flip: r() < 0.5 }); }
 function buildNature() {
+  buildClouds();
   const r = mulberry(11);
   for (const f of MAP.faces) {
     if (f.kind === 'park' && f.inner) { const n = Math.floor(f.area / 220); for (let k = 0; k < n; k++) { const i = r.int(0, f.inner.length - 1), p = f.inner[i], x = lerp(p[0], f.cx, r()), z = lerp(p[1], f.cz, r()); if (groundKind(x, z) !== GK.water && !inLot(x, z, 3)) addProp(r() < 0.2 ? 'palm' + r.int(0, 1) : r() < 0.3 ? 'tall' : 'tree' + r.int(0, 2), x, z, { s: 0.9 + r() * 0.5 }); } }

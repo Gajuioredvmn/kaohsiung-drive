@@ -69,6 +69,13 @@ function paintPerson(seed, step, down) {
 }
 function paintDigit(d, col) { const px = new Pix(14, 22); px.rect(0, 0, 14, 22, 0x141418); px.text(String(d), 7, 1, 19, col, { align: 'center', weight: 900, font: '"Russo One","Noto Sans TC",monospace' }); return px; }
 function paintGlow(col) { const px = new Pix(24, 12); for (let y = 0; y < 12; y++) for (let x = 0; x < 24; x++) { const dx = (x + 0.5 - 12) / 12, dy = (y + 0.5 - 6) / 6, d = dx * dx + dy * dy; if (d < 1) px.dset(x, y, col, shadeHex(col, 1.6), 1 - d); } return px; }
+// a cloud: a few overlapping soft lumps, lit from above, dithered at the edges
+function paintCloud(seed) {
+  const r = mulberry(seed), W = 96, H = 40, px = new Pix(W, H), lumps = [];
+  for (let k = 0; k < 6; k++) lumps.push([14 + r() * (W - 28), 14 + r() * 14, 9 + r() * 11]);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let d = 0; for (const [cx, cy, rr] of lumps) { const dx = (x - cx) / rr, dy = (y - cy) / (rr * 0.62); d = Math.max(d, 1 - (dx * dx + dy * dy)); } if (d <= 0) continue; const shade = y > 24 ? 0xd4dce8 : y > 16 ? 0xeef2f8 : 0xffffff; px.dset(x, y, shade, 0xffffff, Math.min(1, d * 2.2)); }
+  return px;
+}
 // the job markers: a sign on a pole for a fare, an order, a trial; a floating diamond for where to go
 function paintMarker(kind) {
   const px = new Pix(40, 64);
@@ -83,6 +90,7 @@ function paintProps() {
   propKind('mk_taxi', paintMarker('taxi'), 3.2); propKind('mk_box', paintMarker('box'), 3.2); propKind('mk_flag', paintMarker('flag'), 3.2); propKind('mk_goal', paintMarker('goal'), 2.4); propKind('mk_cp', paintMarker('cp'), 2.0);
   for (let d = 0; d < 10; d++) { propKind('dr' + d, paintDigit(d, 0xff3a3a), 0.44); propKind('dg' + d, paintDigit(d, 0x40f070), 0.44); }
   propKind('glow_red', paintGlow(0xff2020), 0.3); propKind('glow_head', paintGlow(0xfff0c0), 0.22); propKind('glow_lamp', paintGlow(0xffd890), 1.6);
+  for (let i = 0; i < 4; i++) propKind('cloud' + i, paintCloud(900 + i * 17), 48, { shadow: 0 });
   for (let i = 0; i < 3; i++) propKind('tree' + i, paintTree(300 + i * 7, i === 2 ? 'flame' : 'banyan'), 9 + i, { r: 0.8, solid: true });
   for (let i = 0; i < 2; i++) propKind('palm' + i, paintTree(400 + i * 7, 'palm'), 10 + i * 2, { r: 0.5, solid: true });
   propKind('tall', paintTree(410, 'tall'), 14, { r: 0.6, solid: true });
