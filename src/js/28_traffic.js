@@ -154,10 +154,19 @@ function trafficTick(dt) {
     if (v.horn > 0) v.horn -= dt;
     // the whoosh of something passing close by at speed
     { const rel = Math.abs(v.v - (phx * Math.sin(v.yaw) + phz * Math.cos(v.yaw))), dd = Math.sqrt(dpx * dpx + dpz * dpz); if (dd < 6 && rel > 8 && !v.passed) { v.passed = true; const side = Math.sign(dpx * (-Math.cos(C.yaw)) * -1 + dpz * Math.sin(C.yaw)); if (typeof sfxPass === 'function') sfxPass(clamp(rel / 30, 0.3, 1), -side, v.type === 'bus' ? 'bus' : v.type === 'truck' ? 'gravel' : 'car'); } else if (dd > 12) v.passed = false; }
+    if (v.yieldT > 0) { v.yieldT -= dt; gap = 0.05; dv = v.v; }   // giving ground to the player: held still
     if (v.shoved > 0) { v.shoved -= dt; if (gap != null && gap < 5) { gap = 5; dv = 0; } }   // just shoved by the player: keep rolling a moment
+    // gridlock breaker: a vehicle stuck behind something that is itself not moving gives up waiting after a while
+    v.stillT = v.v < 0.2 && !(v.dwell > 0) ? (v.stillT || 0) + dt : 0;
+    if (v.stillT > 12 && gap != null && Math.abs(dv) < 0.5 && !(v.blockT >= 2)) {
+      if (dpx * dpx + dpz * dpz > 220 * 220) { retire(v, i); i--; continue; }
+      gap = Math.max(gap, 7); dv = 0;
+    }
+    if (window.__dbgTr) v.dbg = [gap == null ? null : +gap.toFixed(2), +dv.toFixed(2)];
     const acc = idm(v, gap, dv);
     v.v = Math.max(0, v.v + clamp(acc, -6, 3) * dt); v.brake = acc < -0.8 ? 1 : 0;
     const vmaxHere = v.conn ? v.conn.vmax : v.lane.vmax; if (v.v > vmaxHere * 1.1) v.v = vmaxHere * 1.1;
+    if (v.dbg) v.dbg.push(+acc.toFixed(2), +v.v.toFixed(2), vmaxHere, v.a, v.v0);
     v.s += v.v * dt;
     // onto the next path
     if (v.s >= path.len) {
@@ -217,10 +226,14 @@ function trafficCollide(dt) {
       const cu = clamp(lu, -hx, hx), cv = clamp(lv, -hz, hz), du = lu - cu, dv = lv - cv, d = Math.hypot(du, dv); if (d >= rc) continue;
       let lnx, lnz, pen; if (d > 1e-3) { lnx = du / d; lnz = dv / d; pen = rc - d; } else { const toL = lu + hx, toR = hx - lu, toT = lv + hz, toB = hz - lv, m = Math.min(toL, toR, toT, toB); lnx = m === toL ? -1 : m === toR ? 1 : 0; lnz = m === toT ? -1 : m === toB ? 1 : 0; pen = m + rc; }
       const nx = lnx * c + lnz * sn, nz = -lnx * sn + lnz * c;
-      C.x += nx * pen; C.z += nz * pen; carBounce(nx, nz);
       // pushed from behind, the vehicle rolls on rather than sitting there (the way a jam gives way in an arcade city)
-      const fwd = (C.vx * sy) * Math.sin(v.yaw) + (C.vx * cy) * Math.cos(v.yaw); if (fwd > 0.3 && lv < 0 && !v.cop) { v.v = Math.max(v.v, Math.min(3, fwd)); v.shoved = 2; }
-      v.v *= v.cop ? 0.85 : 0.6; if (v.horn <= 0) v.horn = 2; if (typeof onTrafficHit === 'function') onTrafficHit(v); if (typeof sfxHornFar === 'function' && Math.random() < 0.3) sfxHornFar(3);
+      const fwd = (C.vx * sy) * Math.sin(v.yaw) + (C.vx * cy) * Math.cos(v.yaw), leaning = C.throttle > 0.3 && !C.rev && Math.abs(fwd) < 0.5, pushing = lv < 0 && !v.cop && (fwd > 0.3 || leaning);
+      const yielding = !pushing && lv > 0 && !v.cop && v.v < 0.6 && leaning;
+      if (window.__dbgTr) v.cdbg = [k, +fwd.toFixed(3), +lv.toFixed(2), +lu.toFixed(2), C.throttle, C.rev, pushing, yielding];
+      if (yielding) { v.s = Math.max(0, v.s - 3.0 * dt); v.v = 0; v.yieldT = 0.8; if (v.horn <= 0) v.horn = 2; C.x += nx * pen * 0.3; C.z += nz * pen * 0.3; continue; }   // head-on and leaning on it: the other car backs off
+      C.x += nx * pen; C.z += nz * pen; carBounce(nx, nz);
+      if (pushing) { v.v = Math.max(v.v, Math.min(3, Math.max(fwd, 1.5))); v.shoved = 2; }   // nudged along, even by a car that is only leaning on it
+      else v.v *= v.cop ? 0.85 : 0.6; if (v.horn <= 0) v.horn = 2; if (typeof onTrafficHit === 'function') onTrafficHit(v); if (typeof sfxHornFar === 'function' && Math.random() < 0.3) sfxHornFar(3);
     }
   }
 }

@@ -168,6 +168,8 @@ function propsCollide(dt) {
         nx = lnx * c + lnz * sn; nz = -lnx * sn + lnz * c;
       }
       C.x += nx * pen; C.z += nz * pen; carBounce(nx, nz);
+      // nosed into a wall at a crawl, the car is turned to slide along it instead of grinding to a halt
+      if (Math.abs(C.vx) < 4 && C.throttle > 0.2) { const fn = sy * nx + cy * nz; if (fn < -0.05) { const side = sy * nz - cy * nx; C.yaw += (side >= 0 ? -1 : 1) * Math.min(0.5, -fn) * 6 * dt; let tx = -nz, tz = nx; if (tx * sy + tz * cy < 0) { tx = -tx; tz = -tz; } const wv = 1.8 * (1 + fn); C.vx = Math.max(C.vx, (tx * sy + tz * cy) * wv); C.vy = wv * (tx * cy - tz * sy); } }
     }
   }
 }

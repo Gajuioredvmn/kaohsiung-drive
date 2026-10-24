@@ -62,10 +62,11 @@ function aerialUpdate(dt) {
   const A = AERIAL, L = MAP.landmarks;
   if (G.mode === 'title') {
     // a slow circuit over the sights, drifting from one to the next
-    const tour = ['美麗島', '八五大樓', '駁二', '中央公園', '高雄車站', '夢時代', '旗津', '龍虎塔'];
+    const tour = ['美麗島', '八五大樓', '駁二', '中央公園', '高雄車站', '夢時代', '旗津', '龍虎塔', '高鐵左營站', '澄清湖', '大東藝文中心', '小港機場', '中鋼'].filter((k) => L[k]);
     A.t += dt; const i = Math.floor(A.t / 16) % tour.length, k = (A.t % 16) / 16, from = L[tour[i]], to = L[tour[(i + 1) % tour.length]], e = k < 0.7 ? 0 : (k - 0.7) / 0.3, se = e * e * (3 - 2 * e);
     A.lookX = lerp(from[0], to[0], se); A.lookZ = lerp(from[1], to[1], se); A.az += dt * 0.08; A.dist = 420; A.el = 0.62;
   }
+  if (A.god) { const far = Math.max(4200, A.dist * 3.2); if (Math.abs(far - (R3.fogFar || 0)) > 50) r3FogRange(far * 0.45, far); }
   const cam = R3.cam, ce = Math.cos(A.el), px = A.lookX - Math.sin(A.az) * A.dist * ce, pz = A.lookZ - Math.cos(A.az) * A.dist * ce, py = A.dist * Math.sin(A.el);
   cam.position.set(px, Math.max(py, groundHSafe(px, pz) + 12), pz); cam.lookAt(A.lookX, 0, A.lookZ); cam.fov = 48; cam.updateProjectionMatrix();
   CAMV.az = A.az;

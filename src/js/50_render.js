@@ -9,7 +9,7 @@ const FOG_NEAR = 300, FOG_FAR = 1150;
 // the haze pulled back for the aerial views (the title's flight and the god's-eye map), and restored for driving
 function r3FogRange(near, far) {
   R3.fogFar = far; if (R3.scene && R3.scene.fog) { R3.scene.fog.near = near; R3.scene.fog.far = far; }
-  const mats = [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.waterMat, R3.fxMesh && R3.fxMesh.material];
+  const mats = [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.waterMat, R3.fxMesh && R3.fxMesh.material, R3.horizon && R3.horizon.material];
   for (const m of mats) { const u = m && m.uniforms; if (!u) continue; if (u.fogNear) u.fogNear.value = near; if (u.fogFar) u.fogFar.value = far; }
   if (R3.cam) { R3.cam.far = Math.max(2600, far * 1.6); R3.cam.updateProjectionMatrix(); }
 }
@@ -32,7 +32,9 @@ const BILLBOARD_VS = `
   uniform vec3 camPos; uniform mat4 shadowMat;
   void main() {
     vec3 toCam = camPos - iPos; toCam.y = 0.0; vec3 fwd = normalize(toCam); vec3 right = vec3(fwd.z, 0.0, -fwd.x);
-    vec3 p = iPos + right * (position.x * iSize.x) + vec3(0.0, (position.y + 0.5) * iSize.y, 0.0);
+    vec3 up = vec3(0.0, 1.0, 0.0);
+    if (iPos.y > 300.0) { vec3 f = normalize(camPos - iPos); right = normalize(cross(up, f)); up = cross(f, right); }   // the clouds face the camera fully, so they read from above too
+    vec3 p = iPos + right * (position.x * iSize.x) + up * ((position.y + 0.5) * iSize.y);
     float u = iFlip > 0.5 ? 1.0 - uv.x : uv.x;
     vUv = vec2(mix(iUV.x, iUV.z, u), mix(iUV.y, iUV.w, uv.y));
     vShadow = shadowMat * vec4(iPos + vec3(0.0, 0.4 + (position.y + 0.5) * iSize.y * 0.15, 0.0), 1.0);
@@ -93,7 +95,7 @@ function r3Init() {
   scene.fog = new THREE.Fog(R3.tod.fog, FOG_NEAR, FOG_FAR); scene.background = new THREE.Color(R3.tod.sky);
   R3.cam = new THREE.PerspectiveCamera(42, 16 / 9, 0.6, 2600);
   R3.sun = new THREE.Vector3(...R3.tod.sun).normalize();
-  r3ShadowInit(); r3Ground(); r3Water(); r3Sky(); r3Atlas(); r3City(); r3Props(); r3Traffic(); r3Shadow(); r3Marks();
+  r3ShadowInit(); r3Ground(); r3Water(); r3Sky(); r3Horizon(); r3Atlas(); r3City(); r3Props(); r3Traffic(); r3Shadow(); r3Marks();
   for (const m of CITY.meshes || []) scene.add(m);
   // the finish needs a depth texture: WebGL2 (every modern phone); otherwise the plain picture
   if (rd.capabilities.isWebGL2) { try { r3Post(); } catch (e) { R3.post = null; reportErr('post: ' + e.message); } } else R3.postOff = 'WebGL1';
@@ -172,7 +174,7 @@ function r3ShadowPass() {
   for (const m of r3ShadowMats()) { m.uniforms.shadowOn.value = 1; m.uniforms.shadowMap.value = R3.shadowRT.depthTexture; }
 }
 function r3Ground() {
-  const N = 300, W = MAP.W, geo = new THREE.PlaneGeometry(W, W, N, N); geo.rotateX(-Math.PI / 2);
+  const N = 600, W = MAP.W, geo = new THREE.PlaneGeometry(W, W, N, N); geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) { const x = pos.getX(i) + W / 2, z = pos.getZ(i) + W / 2; const k = groundKind(x, z); pos.setY(i, k === GK.water ? (riverDist(x, z) < 30 ? -2.4 : -1.2) : terrainH(x, z)); }
   geo.computeVertexNormals();
@@ -183,6 +185,38 @@ function r3Ground() {
   R3.ambLight = new THREE.AmbientLight(0xc0d0e8, 1.0); scene3Add(R3.ambLight);
 }
 function scene3Add(m) { R3.scene.add(m); }
+// the land beyond the map: the hills and mountains round 高雄 as a hazy backdrop, drawn just in front of the sky dome
+// (real metres from 美麗島: x east, z south; rx/rz the half extents, h the height)
+const FAR_HILLS = [
+  [-300, -20500, 1500, 1100, 200, '小崗山'], [1500, -24500, 2300, 1800, 310, '大崗山'], [4600, -10800, 1500, 1200, 180, '觀音山'],
+  [7800, -7800, 2600, 2400, 120, '仁武丘陵'], [12500, -14500, 6500, 5500, 420, '內門旗山'], [7200, 5400, 1900, 1300, 95, '大坪頂'],
+  [6200, 9800, 1600, 900, 110, '鳳鼻頭'], [21000, -3000, 9000, 17000, 950, '中央山脈'], [24000, -21000, 9000, 11000, 1250, '玉山山脈'], [14000, 3000, 4000, 4000, 300, '大寮丘陵'],
+];
+function farH(x, z) {   // real coords
+  let h = 0;
+  for (const [hx, hz, rx, rz, hh] of FAR_HILLS) { const dx = (x - hx) / rx, dz = (z - hz) / rz, r = Math.sqrt(dx * dx + dz * dz); if (r < 1) { const k = 1 - r; h += k * k * (3 - 2 * k) * hh * (0.7 + 0.6 * vnoise2(x * 0.0009 + 7, z * 0.0009)); } }
+  return h;
+}
+function farWater(x, z) { return z < 400 ? x < -3450 : z < 6300 ? x < -4300 : x < -500 + (z - 6200) * 1.0; }
+const HORIZON_VS = `attribute vec3 col; varying vec3 vCol, vN; varying float vD; uniform vec3 camPos;
+  void main() { vCol = col; vN = normal; vec4 wp = modelMatrix * vec4(position, 1.0); vD = distance(wp.xyz, camPos); gl_Position = projectionMatrix * viewMatrix * wp; gl_Position.z = gl_Position.w * 0.9998; }`;
+const HORIZON_FS = `precision mediump float; uniform vec3 sunDir, tint, fogColor; uniform float fogNear, fogFar; varying vec3 vCol, vN; varying float vD;
+  void main() { float lit = 0.6 + 0.5 * max(0.0, dot(normalize(vN), sunDir)); vec3 c = vCol * lit * tint; float haze = max(1.0 - exp(-vD / 7000.0), smoothstep(fogNear, fogFar, vD) * 0.9); c = mix(c, fogColor, clamp(haze, 0.0, 0.93)); gl_FragColor = vec4(c, 1.0); }`;
+function r3Horizon() {
+  const X0 = -32000, X1 = 44000, Z0 = -44000, Z1 = 32000, N = 150, W = (X1 - X0) * RS, H = (Z1 - Z0) * RS;
+  const geo = new THREE.PlaneGeometry(W, H, N, N); geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const x = X0 + (pos.getX(i) + W / 2) / RS, z = Z0 + (pos.getZ(i) + H / 2) / RS;   // real metres
+    const inMap = x > -4300 && x < 10970 && z > -9000 && z < 6272; let h, c;
+    if (farWater(x, z) && !inMap) { h = -1.5; c = [0.17, 0.4, 0.56]; }
+    else { h = inMap ? -4 : farH(x, z); const f = clamp(h / 500, 0, 1), fr = vnoise2(x * 0.002, z * 0.002); c = h < 50 ? [0.46 + fr * 0.1, 0.6 + fr * 0.06, 0.3] : [lerp(0.24, 0.45, f), lerp(0.42, 0.5, f), lerp(0.2, 0.52, f)]; }
+    pos.setY(i, h); col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
+  }
+  geo.setAttribute('col', new THREE.BufferAttribute(col, 3)); geo.computeVertexNormals();
+  const mat = new THREE.ShaderMaterial({ vertexShader: HORIZON_VS, fragmentShader: HORIZON_FS, uniforms: { camPos: { value: new THREE.Vector3() }, sunDir: { value: R3.sun }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR } }, depthWrite: false, depthTest: false, fog: false });
+  const m = new THREE.Mesh(geo, mat); m.position.set(rx_((X0 + X1) / 2), 0, rz_((Z0 + Z1) / 2)); m.frustumCulled = false; m.renderOrder = -9; scene3Add(m); R3.horizon = m;
+}
 // the sky: a dome round the camera, hazy at the horizon and blue overhead, with a warm glow toward the sun
 const SKY_VS = `varying vec3 vDir; void main() { vDir = normalize(position); vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_Position.z = gl_Position.w * 0.9999; }`;
 const SKY_FS = `precision mediump float; uniform vec3 top, horizon, haze, sunDir; varying vec3 vDir;
@@ -205,13 +239,13 @@ function setTod(kind) {
   if (R3.sky) { const u = R3.sky.material.uniforms; u.top.value.setHex(T.top); u.horizon.value.setHex(T.horizon); u.haze.value.setHex(T.fog); }
   if (R3.sunLight) { R3.sunLight.intensity = T.sunI; R3.sunLight.color.setHex(T.sunC); R3.sunLight.position.set(T.sun[0] * 500, T.sun[1] * 500, T.sun[2] * 500); }
   if (R3.ambLight) { R3.ambLight.intensity = T.amb; R3.ambLight.color.setHex(T.ambC); }
-  for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material]) { const u = m && m.uniforms; if (!u) continue; if (u.tint) u.tint.value.set(T.tint[0], T.tint[1], T.tint[2]); if (u.fogColor) u.fogColor.value.setHex(T.fog); }
+  for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material, R3.horizon && R3.horizon.material]) { const u = m && m.uniforms; if (!u) continue; if (u.tint) u.tint.value.set(T.tint[0], T.tint[1], T.tint[2]); if (u.fogColor) u.fogColor.value.setHex(T.fog); }
   if (R3.fxMesh) R3.fxMesh.material.uniforms.fogColor.value.setHex(T.fog);
   if (R3.waterMat) { const u = R3.waterMat.uniforms; u.fogColor.value.setHex(T.fog); u.skyCol.value.setHex(T.horizon); u.tint.value.set(T.tint[0], T.tint[1], T.tint[2]); }
   // the darkness goes into the post pass's grade; without the post pass (quality off) the tint carries it instead
   const g = T.grade || R3.gradeDay; if (R3.post && R3.post.comp) R3.post.comp.uniforms.grade.value.set(g[0], g[1], g[2]);
   if (R3.fxMesh) { const u = R3.fxMesh.material.uniforms; if (u.tint) u.tint.value.set(Math.min(2.6, 1 / g[0]), Math.min(2.6, 1 / g[1]), Math.min(2.6, 1 / g[2])); }   // the glows stay bright through the grade
-  if (SET.quality === 'off' || R3.postFail) for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material]) { const u = m && m.uniforms; if (u && u.tint) u.tint.value.set(T.tint[0] * g[0] / R3.gradeDay[0], T.tint[1] * g[1] / R3.gradeDay[1], T.tint[2] * g[2] / R3.gradeDay[2]); }
+  if (SET.quality === 'off' || R3.postFail) for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material, R3.horizon && R3.horizon.material]) { const u = m && m.uniforms; if (u && u.tint) u.tint.value.set(T.tint[0] * g[0] / R3.gradeDay[0], T.tint[1] * g[1] / R3.gradeDay[1], T.tint[2] * g[2] / R3.gradeDay[2]); }
 
 }
 // ---------- the city: the atlas, one flat mesh and one box mesh per chunk ----------
@@ -461,6 +495,7 @@ function r3Update(camYaw) {
   R3.propMesh.material.uniforms.camPos.value.copy(R3.cam.position);
   if (R3.waterMat) { R3.waterMat.uniforms.camPos.value.copy(R3.cam.position); R3.waterMat.uniforms.t.value = G.t; }
   if (R3.sky) R3.sky.position.copy(R3.cam.position);
+  if (R3.horizon) R3.horizon.material.uniforms.camPos.value.copy(R3.cam.position);
   r3TrafficUpdate(); r3PeopleUpdate(); r3FxUpdate();
   if (CITY.wheel) CITY.wheel.rotation.z += 0.0025;
 }

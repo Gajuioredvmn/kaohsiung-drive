@@ -21,7 +21,7 @@ function godTouch(kind, id, x, y) {
     const [a, b] = [...T.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
     if (id === [...T.keys()][0]) { t.x = x; t.y = y; } else { t.x = x; t.y = y; }
     const d2 = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-    if (A.pinch0 == null) A.pinch0 = d; else { A.dist = clamp(A.dist * (d / d2), 160, 4000); }
+    if (A.pinch0 == null) A.pinch0 = d; else { A.dist = clamp(A.dist * (d / d2), 160, 7000); }
     return;
   }
   const dx = x - t.x, dy = y - t.y; t.x = x; t.y = y;
@@ -52,7 +52,7 @@ const glEl = $('gl');
 glEl.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; glEl.setPointerCapture && glEl.setPointerCapture(e.pointerId); touchDown(e.pointerId, e.clientX, e.clientY); e.preventDefault(); });
 glEl.addEventListener('pointermove', (e) => touchMove(e.pointerId, e.clientX, e.clientY));
 glEl.addEventListener('pointerup', (e) => touchUp(e.pointerId)); glEl.addEventListener('pointercancel', (e) => touchUp(e.pointerId));
-glEl.addEventListener('wheel', (e) => { if (G.mode === 'god') { AERIAL.dist = clamp(AERIAL.dist * (e.deltaY > 0 ? 1.15 : 0.87), 160, 4000); e.preventDefault(); } }, { passive: false });
+glEl.addEventListener('wheel', (e) => { if (G.mode === 'god') { AERIAL.dist = clamp(AERIAL.dist * (e.deltaY > 0 ? 1.15 : 0.87), 160, 7000); e.preventDefault(); } }, { passive: false });
 addEventListener('keydown', (e) => {
   CTL.keys[e.code] = true;
   if (G.mode === 'drive') {

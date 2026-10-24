@@ -136,7 +136,7 @@ function buildHarbour() {
 function buildQijin() {
   const [x, z] = MAP.landmarks.旗津, r = mulberry(31);
   // the lighthouse on 旗後山
-  const lx = 112, lz = 1787, ly = terrainH(lx, lz), white = new THREE.MeshLambertMaterial({ color: 0xf4f4f0 });
+  const [lx, lz] = R2([-3251, 1249]), ly = terrainH(lx, lz), white = new THREE.MeshLambertMaterial({ color: 0xf4f4f0 });
   const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.8, 11, 12), white); tower.position.set(lx, ly + 5.5, lz); CITY.meshes.push(tower);
   box(lx, ly + 11, lz + 1.5, 0, 3, 2.4, 3, T('glass85'), T('glass85'), T('dark'), null, 0, 0); box(lx, ly + 13.4, lz + 1.6, 0, 3.4, 0.5, 3.4, T('dark'), T('dark'), T('dark'));
   box(lx + 8, ly, lz + 6, 0, 12, 4, 10, T('wall7'), T('wall7'), T('rooftiles'), null, 4, 4);
@@ -144,7 +144,7 @@ function buildQijin() {
   // 天后宮 by the ferry, facing the old street
   temple(x, z, Math.PI / 2 + 0.4, r);
   // palms along the beach
-  for (let i = 0; i < 120; i++) { const px = 60 + r() * 1100, pz = 1700 + r() * 1900; if (groundKind(px, pz) === GK.sand && pointInPoly(MAP.qijin, px, pz) && r() < 0.6) addProp('palm' + r.int(0, 1), px, pz, { s: 0.8 + r() * 0.5 }); }
+  for (let i = 0; i < 160; i++) { const [px, pz] = R2([-3345 + r() * 2300, 1091 + r() * 4900]); if (groundKind(px, pz) === GK.sand && pointInPoly(MAP.qijin, px, pz) && r() < 0.6) addProp('palm' + r.int(0, 1), px, pz, { s: 0.8 + r() * 0.5 }); }
 }
 // a temple: a hall with a swallow-tail roof behind a small courtyard, lanterns and an incense burner
 function temple(x, z, yaw, r) {
@@ -203,8 +203,8 @@ function buildNature() {
     if (f.kind === 'park' && f.inner) { const n = Math.floor(f.area / 220); for (let k = 0; k < n; k++) { const i = r.int(0, f.inner.length - 1), p = f.inner[i], x = lerp(p[0], f.cx, r()), z = lerp(p[1], f.cz, r()); if (groundKind(x, z) !== GK.water && !inLot(x, z, 3)) addProp(r() < 0.2 ? 'palm' + r.int(0, 1) : r() < 0.3 ? 'tall' : 'tree' + r.int(0, 2), x, z, { s: 0.9 + r() * 0.5 }); } }
     if (f.kind === 'bank' && f.kerb) { const K = f.kerb; for (let i = 0; i < K.length; i++) { const a = K[i], b = K[(i + 1) % K.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]); for (let s = 6; s < L - 6; s += 11) { const x = a[0] + (b[0] - a[0]) * s / L, z = a[1] + (b[1] - a[1]) * s / L; if (groundKind(x, z) !== GK.water && riverDist(x, z) > 24) addProp(r() < 0.4 ? 'palm' + r.int(0, 1) : 'tree' + r.int(0, 2), x, z, { s: 0.9 + r() * 0.4 }); } } }
   }
-  for (let i = 0; i < 2200; i++) { const x = r() * 1100, z = r() * 1300; const h = terrainH(x, z); if (h > 5 && groundKind(x, z) !== GK.water && !nearRoad(x, z, 6)) addProp(r() < 0.15 ? 'tall' : 'tree' + r.int(0, 2), x, z, { s: 0.9 + r() * 0.7 }); }
-  for (let i = 0; i < 300; i++) { const x = 1000 + r() * 560, z = 20 + r() * 460; if (groundKind(x, z) !== GK.water && !nearRoad(x, z, 6) && !inLot(x, z, 4) && Math.hypot(x - MAP.landmarks.龍虎塔[0], z - MAP.landmarks.龍虎塔[1]) > 40) addProp(r() < 0.3 ? 'palm' + r.int(0, 1) : 'tree' + r.int(0, 2), x, z, { s: 0.9 + r() * 0.5 }); }
+  for (const H of HILLS) { const n = Math.round(H.rx * H.rz / 420); for (let i = 0; i < n; i++) { const a = r() * TAU, d = Math.sqrt(r()) * 0.9, x = H.x + Math.cos(a) * d * H.rx, z = H.z + Math.sin(a) * d * H.rz; const h = terrainH(x, z); if (h > 4 && groundKind(x, z) !== GK.water && !nearRoad(x, z, 6)) addProp(r() < 0.15 ? 'tall' : 'tree' + r.int(0, 2), x, z, { s: 0.9 + r() * 0.7 }); } }
+  for (let i = 0; i < 300; i++) { const [x, z] = R2([-1636 + r() * 1018, -1964 + r() * 836]); if (groundKind(x, z) !== GK.water && !nearRoad(x, z, 6) && !inLot(x, z, 4) && Math.hypot(x - MAP.landmarks.龍虎塔[0], z - MAP.landmarks.龍虎塔[1]) > 40) addProp(r() < 0.3 ? 'palm' + r.int(0, 1) : 'tree' + r.int(0, 2), x, z, { s: 0.9 + r() * 0.5 }); }
   // 旗津's houses along the island road: low, old, tiled
   for (const e of MAP.edges) {
     if (e.kind !== 'rural' || !e.strip) continue;

@@ -8,7 +8,7 @@ function uiInit() {
   const root = $('ui');
   root.innerHTML = `
   <section class="scr" id="s-title">
-    <div class="title-wrap"><div class="logo"><span class="logo-tc">港都漫遊</span><span class="logo-en">KAOHSIUNG DRIVE</span><span class="logo-yr">高雄・開放世界　HD-2D　第一階段</span></div>
+    <div class="title-wrap"><div class="logo"><span class="logo-tc">港都漫遊</span><span class="logo-en">KAOHSIUNG DRIVE</span><span class="logo-yr">高雄・開放世界　HD-2D</span></div>
       <div class="tap" id="tap">點一下開始　TAP TO START</div>
       <div class="menu" id="menu" hidden><button class="btn big" data-go="select">選車出發</button><button class="btn" data-act="god">俯瞰高雄</button><button class="btn" data-go="settings">設定</button></div></div>
     <div class="foot">左右傾斜手機轉向・右手油門煞車・畫面上方左右拖曳轉鏡頭</div>

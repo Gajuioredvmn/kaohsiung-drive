@@ -46,7 +46,12 @@ const _sn = [];
 function solidsNear(x, z, R) { _sn.length = 0; const c = SOL.cell; for (let i = Math.floor((x - R) / c); i <= Math.floor((x + R) / c); i++) for (let j = Math.floor((z - R) / c); j <= Math.floor((z + R) / c); j++) { const a = SOL.grid.get(i + ',' + j); if (a) for (const s of a) if (!_sn.includes(s)) _sn.push(s); } return _sn; }
 // a solid for a box placed like box(): the oriented footprint
 function boxSolid(x, z, yaw, w, d, h) { const s = Math.sin(yaw), c = Math.cos(yaw); addSolid({ x: x - s * d / 2, z: z - c * d / 2, yaw, hx: w / 2, hz: d / 2, h: h == null ? 100 : h }); }
-function inLot(x, z, m) { for (const L of CITY.lots) if (x > L[0] - (m || 0) && x < L[2] + (m || 0) && z > L[1] - (m || 0) && z < L[3] + (m || 0)) return true; return false; }
+// under an elevated deck (not a tunnel, not a hill road): nothing tall is built there
+function underDeck(x, z, m) {
+  for (const e of MAP.elev) { if (e.tunnel || e.hill) continue; const bb = e.bb; if (x < bb[0] - m || x > bb[2] + m || z < bb[1] - m || z > bb[3] + m) continue; const n = nearestOnPts(e.pts, x, z); if (n.d < e.w / 2 + m) return true; }
+  return false;
+}
+function inLot(x, z, m) { for (const L of CITY.lots) if (x > L[0] - (m || 0) && x < L[2] + (m || 0) && z > L[1] - (m || 0) && z < L[3] + (m || 0)) return true; return underDeck(x, z, (m || 0) + 3); }
 function lot(x0, z0, x1, z1) { CITY.lots.push([Math.min(x0, x1), Math.min(z0, z1), Math.max(x0, x1), Math.max(z0, z1)]); }
 // ---------- helpers along polylines ----------
 function polyLen(pts) { let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return L; }
@@ -228,7 +233,7 @@ function pickTH(r, dist, w) { const list = ATLAS.th.filter((t) => t.dist === dis
 function buildBlocks() {
   const r = mulberry(99); let houses = 0, bigs = 0, inner = 0;
   for (const f of MAP.faces) {
-    if (!f.inner || f.kind !== 'city') continue;
+    if (!f.inner || f.kind !== 'city' || (typeof inIndustry === 'function' && inIndustry(f.cx, f.cz))) continue;
     const S = f.inner, n = S.length, dist = district(f.cx, f.cz);
     const reserve = 16;
     for (let i = 0; i < n; i++) {
@@ -299,10 +304,10 @@ function fillInterior(f, r, dist) {
   if (x1 - x0 < 10 || z1 - z0 < 10) return 0;
   let n = 0; const wallT = T('wall' + r.int(0, 7));
   for (let z = z0 + 5; z < z1 - 4; z += 9) for (let x = x0 + 5; x < x1 - 4; x += 8) {
-    if (r() < 0.25 || !pointInPoly(inner, x, z) || !pointInPoly(inner, x + 6, z + 7) || inLot(x, z, 4)) continue;
+    if (r() < 0.25 || !pointInPoly(inner, x, z) || !pointInPoly(inner, x + 6, z + 7) || inLot(x, z, 4) || inLot(x + 6, z + 7, 4)) continue;
     const h = 3.4 * (2 + r.int(0, 2)) + 0.5, w = 6 + r() * 2, d = 7 + r() * 2;
     box(x + w / 2, terrainH(x, z), z + d, 0, w, h, d, T('wall' + r.int(0, 7)), wallT, T(r() < 0.5 ? 'tin' + r.int(0, 2) : 'roof' + r.int(0, 3)), null, 4, 4);
-    addSolid({ x: x + w / 2, z: z + d / 2, yaw: 0, hx: w / 2, hz: d / 2 }); n++;
+    addSolid({ x: x + w / 2, z: z + d / 2, yaw: 0, hx: w / 2, hz: d / 2, y0: terrainH(x, z), h: h + 0.5 }); n++;
   }
   return n;
 }
