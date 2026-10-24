@@ -83,7 +83,7 @@ function vehPose(v) {
   const path = v.conn || v.lane, p = polyAt(path.pts, v.s);
   // scooters keep to the kerb side of their lane
   const rx_ = Math.cos(p.yaw), rz_ = -Math.sin(p.yaw), side = v.side * (path.laneW ? (path.laneW / 2 - 0.6) : 0.8);
-  v.x = p.x + rx_ * side; v.z = p.z + rz_ * side; v.yaw = p.yaw; v.y = groundH(v.x, v.z, v.lane.e.h0 != null ? v.lane.e.h0 : 0);
+  v.x = p.x + rx_ * side; v.z = p.z + rz_ * side; v.yaw = p.yaw; const e = v.lane.e; v.y = groundH(v.x, v.z, e.tunnel ? tunnelH(e.rd, e.s0 + Math.min(v.s, e.len)) : e.h0 != null ? e.h0 : 0);
 }
 function chooseNext(v, r) {
   const opts = v.lane.next; if (!opts.length) return null;

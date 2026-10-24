@@ -52,7 +52,9 @@ function carShift(g) { if (g < 1 || g > CAR.P.ratios.length || g === CAR.gear) r
 function carStep(dt) {
   const C = CAR, P = C.P; if (!P) return;
   // the ground under each end, and what it is made of
-  C.surface = GH.tunnel ? GK.asphalt : groundKind(C.x, C.z); C.mu = GK_MU[C.surface]; const gdrag = GK_DRAG[C.surface];
+  // (GH.tunnel is set by the last groundH call anywhere, so it is asked here for the car's own spot)
+  groundH(C.x, C.z, C.y); C.inTunnel = GH.tunnel;
+  C.surface = C.inTunnel ? GK.asphalt : groundKind(C.x, C.z); C.mu = GK_MU[C.surface]; const gdrag = GK_DRAG[C.surface];
   // ---- steering: the wheel moves at a finite rate, and less lock is available at speed ----
   // the input is right-positive; the body frame's steer is left-positive. Small tilts give fine steering (the input
   // is raised to a power), and the lock on offer shrinks with speed so a full tilt at 80 km/h is a lane change, not a spin
@@ -141,6 +143,7 @@ function propsCollide(dt) {
   for (let k = 0; k < 2; k++) {
     const off = k === 0 ? C.P.a * 0.95 : -C.P.b * 0.95, px = C.x + sy * off, pz = C.z + cy * off;
     for (const s of near) {
+      if (C.y > s.y0 + (s.h == null ? 100 : s.h) + 0.2 || C.y < s.y0 - 2.5) continue;   // above it (a deck over a street) or below it (a tunnel under a block)
       let nx, nz, pen;
       if (s.r != null) { const dx = px - s.x, dz = pz - s.z, d = Math.hypot(dx, dz), min = s.r + rc; if (d >= min) continue; nx = d > 1e-3 ? dx / d : 1; nz = d > 1e-3 ? dz / d : 0; pen = min - d; }
       else {
@@ -160,7 +163,7 @@ function propsCollide(dt) {
 // is the point inside a solid lower than y? (for the camera)
 function solidAt(x, y, z, pad) {
   for (const s of solidsNear(x, z, 4)) {
-    if (s.h != null && y > s.h) continue; if (s.h == null && s.r != null && s.r < 0.6) continue;
+    if (y > s.y0 + (s.h == null ? 100 : s.h) || y < s.y0 - 1) continue; if (s.h == null && s.r != null && s.r < 0.6) continue;
     if (s.r != null) { if (Math.hypot(x - s.x, z - s.z) < s.r + (pad || 0)) return s; continue; }
     const c = Math.cos(s.yaw), sn = Math.sin(s.yaw), dx = x - s.x, dz = z - s.z, lu = dx * c - dz * sn, lv = dx * sn + dz * c;
     if (Math.abs(lu) < s.hx + (pad || 0) && Math.abs(lv) < s.hz + (pad || 0)) return s;

@@ -38,6 +38,7 @@ function box(x, y, z, yaw, w, h, d, tf, ts, tt, col, repS, repT, repF) { const c
 // ---------- colliders: oriented boxes and circles the car cannot pass through ----------
 const SOL = { grid: new Map(), cell: 40, list: [] };
 function addSolid(s) {
+  if (s.y0 == null) s.y0 = terrainH(s.x, s.z);   // the base: a thing on the ground, unless told it stands on a deck or a tunnel floor
   SOL.list.push(s); const c = SOL.cell, R = s.r != null ? s.r : Math.hypot(s.hx, s.hz);
   for (let i = Math.floor((s.x - R) / c); i <= Math.floor((s.x + R) / c); i++) for (let j = Math.floor((s.z - R) / c); j <= Math.floor((s.z + R) / c); j++) { const key = i + ',' + j; let a = SOL.grid.get(key); if (!a) SOL.grid.set(key, (a = [])); a.push(s); }
 }
@@ -90,13 +91,13 @@ function buildRoads() {
     const fine = []; let acc = 0; const step = (e.ramp || e.tunnel || e.kind === 'hill' || e.bridge) ? 8 : 20;
     for (let i = 0; i + 1 < pts.length; i++) { const [ax, az] = pts[i], [bx, bz] = pts[i + 1], L = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(L / step)); for (let k = 0; k < n; k++) fine.push([ax + (bx - ax) * k / n, az + (bz - az) * k / n]); }
     fine.push(pts[pts.length - 1]);
-    const off = polyOffsets(fine, e.w / 2), tile = T(e.K.tile), c = chunkAt(fine[Math.floor(fine.length / 2)][0], fine[Math.floor(fine.length / 2)][1]);
+    const off = polyOffsets(fine, e.w / 2), tile = T(e.K.tile), c = chunkAt(fine[Math.floor(fine.length / 2)][0], fine[Math.floor(fine.length / 2)][1]);   // (each quad goes into its own chunk below)
     let s = s0; const ys = [];
     for (let i = 0; i < fine.length; i++) { if (i) s += Math.hypot(fine[i][0] - fine[i - 1][0], fine[i][1] - fine[i - 1][1]); ys.push(surfY(e, fine[i][0], fine[i][1], s)); }
     s = s0;
     for (let i = 0; i + 1 < fine.length; i++) {
       const L0 = off.L[i], R0 = off.R[i], L1 = off.L[i + 1], R1 = off.R[i + 1], seg = Math.hypot(fine[i + 1][0] - fine[i][0], fine[i + 1][1] - fine[i][1]);
-      c.geo.quad([L0[0], ys[i], L0[1]], [R0[0], ys[i], R0[1]], [R1[0], ys[i + 1], R1[1]], [L1[0], ys[i + 1], L1[1]], [0, s / 10, 1, (s + seg) / 10], tile, null, [0, 1, 0]);
+      chunkAt((fine[i][0] + fine[i + 1][0]) / 2, (fine[i][1] + fine[i + 1][1]) / 2).geo.quad([L0[0], ys[i], L0[1]], [R0[0], ys[i], R0[1]], [R1[0], ys[i + 1], R1[1]], [L1[0], ys[i + 1], L1[1]], [0, s / 10, 1, (s + seg) / 10], tile, null, [0, 1, 0]);
       s += seg;
     }
     e.strip = { pts: fine, off, ys };
@@ -113,7 +114,7 @@ function buildApproach(e, end, c) {
   const t = end ? e.tb : e.ta, L = e.len, s0 = end ? L - t - 6 : t, s1 = end ? L - t : t + 6; if (s0 < 0 || s1 > L) return;
   const pts = polyCut(e.pts, s0, s1); if (pts.length < 2) return;
   const a = pts[0], b = pts[pts.length - 1], dx = b[0] - a[0], dz = b[1] - a[1], Ls = Math.hypot(dx, dz) || 1, ux = dx / Ls, uz = dz / Ls, nx = uz, nz = -ux, h = e.w / 2;
-  const y = surfY(e, a[0], a[1], s0) + 0.004, tile = T('zebra');
+  const y = surfY(e, a[0], a[1], s0) + 0.004, tile = T('zebra'); c = chunkAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
   // the tile's v runs from the junction outward, u across the road once a metre
   const A = [a[0] + nx * h, y, a[1] + nz * h], B = [a[0] - nx * h, y, a[1] - nz * h], C = [b[0] - nx * h, y, b[1] - nz * h], D = [b[0] + nx * h, y, b[1] + nz * h];
   c.top.quad(A, B, C, D, end ? [0, 1, e.w, 0] : [0, 0, e.w, 1], tile, null, [0, 1, 0]);
@@ -142,9 +143,10 @@ function buildMedian(e, c) {
   if (i1 <= i0) return;
   for (let i = i0; i < i1; i++) {
     const L0 = off.L[i], R0 = off.R[i], L1 = off.L[i + 1], R1 = off.R[i + 1], y0 = S.ys[i] + 0.18, y1 = S.ys[i + 1] + 0.18, seg = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
-    c.geo.quad([L0[0], y0, L0[1]], [R0[0], y0, R0[1]], [R1[0], y1, R1[1]], [L1[0], y1, L1[1]], [0, s / 5, 1, (s + seg) / 5], tile, null, [0, 1, 0]);
+    const g = chunkAt((pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2).geo;
+    g.quad([L0[0], y0, L0[1]], [R0[0], y0, R0[1]], [R1[0], y1, R1[1]], [L1[0], y1, L1[1]], [0, s / 5, 1, (s + seg) / 5], tile, null, [0, 1, 0]);
     const dx = (pts[i + 1][0] - pts[i][0]) / seg, dz = (pts[i + 1][1] - pts[i][1]) / seg;
-    wall(c.geo, R0[0], R0[1], dx, dz, seg, y0 - 0.18, y0, kerb); wall(c.geo, L1[0], L1[1], -dx, -dz, seg, y0 - 0.18, y0, kerb);
+    wall(g, R0[0], R0[1], dx, dz, seg, y0 - 0.18, y0, kerb); wall(g, L1[0], L1[1], -dx, -dz, seg, y0 - 0.18, y0, kerb);
     s += seg;
   }
   // the ends of the median are capped
@@ -180,21 +182,23 @@ function buildViaduct(e, c) {
     if (y > 0.3) box(pts[i][0], y - 1.5, pts[i][1], yaw + Math.PI, e.w + 1, 1.5 + Math.abs(S.ys[i + 1] - S.ys[i]), seg, conc, conc, conc);
     if (i % 3 === 0 && y > 2) box(pts[i][0], terrainH(pts[i][0], pts[i][1]), pts[i][1], yaw, 2.2, y - 1.5, 2.2, conc, conc, conc);
   }
-  for (const side of ['L', 'R']) for (let i = 0; i + 1 < pts.length; i++) { const mx = (pts[i][0] + pts[i + 1][0]) / 2, mz = (pts[i][1] + pts[i + 1][1]) / 2; if (Math.min(S.ys[i], S.ys[i + 1]) <= 0.6 || (!e.ramp && rampTops.some((q) => Math.hypot(q[0] - mx, q[1] - mz) < 36))) continue; addSolidsAlong([off[side][i], off[side][i + 1]], 0.5); }
+  for (const side of ['L', 'R']) for (let i = 0; i + 1 < pts.length; i++) { const mx = (pts[i][0] + pts[i + 1][0]) / 2, mz = (pts[i][1] + pts[i + 1][1]) / 2; if (Math.min(S.ys[i], S.ys[i + 1]) <= 0.6 || (!e.ramp && rampTops.some((q) => Math.hypot(q[0] - mx, q[1] - mz) < 36))) continue; addSolidsAlong([off[side][i], off[side][i + 1]], 0.5, { y0: Math.min(S.ys[i], S.ys[i + 1]) - 0.3, h: 1.6 }); }
 }
 // the tunnel: retaining walls down the open cuts, then walls and a roof once it is under the water
 function buildTunnel(e, c) {
   const S = e.strip, pts = S.pts, hw = e.w / 2, conc = T('conc'), dark = T('ceil'), off = polyOffsets(pts, hw + 0.4);
   for (let i = 1; i + 2 < pts.length; i++) {   // the mouths stay open: no wall across the junction with the road outside
     const seg = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]), yaw = Math.atan2(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]), y = Math.min(S.ys[i], S.ys[i + 1]), top = Math.max(S.ys[i], S.ys[i + 1]);
-    const covered = y < -3.2;
-    for (const side of ['L', 'R']) { const p = off[side][i], ground = Math.max(0.2, terrainH(p[0], p[1]) + 0.3); box(p[0], y - 0.2, p[1], yaw + Math.PI, 0.8, covered ? 5.6 : Math.max(1.2, ground - y + 0.4), seg, conc, conc, conc, null, 4, 4); }
-    if (covered) box(pts[i][0], top + 5.2, pts[i][1], yaw + Math.PI, e.w + 2.4, 0.6, seg, dark, dark, conc, null, 4, 4);
+    const covered = y < TUN_COVER;
+    // each piece is drawn a little longer than its segment, so the pieces overlap round a bend instead of leaving wedges
+    const ux = Math.sin(yaw), uz = Math.cos(yaw);
+    for (const side of ['L', 'R']) { const p = off[side][i], ground = Math.max(0.2, terrainH(p[0], p[1]) + 0.3); box(p[0] - ux * 0.4, y - 0.2, p[1] - uz * 0.4, yaw + Math.PI, 0.8, covered ? 5.6 : Math.max(1.2, ground - y + 0.4), seg + 0.8, conc, conc, conc, null, 4, 4); }
+    if (covered) box(pts[i][0] - ux * 1.2, top + 5.2, pts[i][1] - uz * 1.2, yaw + Math.PI, e.w + 2.4, 0.6, seg + 2.4, dark, dark, conc, null, 4, 4);
     if (covered && i % 2 === 0) box(pts[i][0], top + 4.9, pts[i][1], yaw + Math.PI, 1.2, 0.3, 0.6, T('white'), T('white'), T('white'));
+    for (const side of ['L', 'R']) addSolidsAlong([off[side][i], off[side][i + 1]], 0.4, { y0: y - 0.3, h: covered ? 6 : Math.max(1.5, terrainH(off[side][i][0], off[side][i][1]) - y + 0.7) });
   }
-  for (const side of ['L', 'R']) addSolidsAlong(off[side].slice(1, -1), 0.4);
 }
-function addSolidsAlong(pts, hw) { for (let i = 0; i + 1 < pts.length; i++) { const dx = pts[i + 1][0] - pts[i][0], dz = pts[i + 1][1] - pts[i][1], L = Math.hypot(dx, dz); if (L < 0.5) continue; addSolid({ x: (pts[i][0] + pts[i + 1][0]) / 2, z: (pts[i][1] + pts[i + 1][1]) / 2, yaw: Math.atan2(dx, dz), hx: hw, hz: L / 2 }); } }
+function addSolidsAlong(pts, hw, o) { for (let i = 0; i + 1 < pts.length; i++) { const dx = pts[i + 1][0] - pts[i][0], dz = pts[i + 1][1] - pts[i][1], L = Math.hypot(dx, dz); if (L < 0.5) continue; addSolid({ x: (pts[i][0] + pts[i + 1][0]) / 2, z: (pts[i][1] + pts[i + 1][1]) / 2, yaw: Math.atan2(dx, dz), hx: hw, hz: L / 2, y0: o && o.y0 != null ? o.y0 : null, h: o && o.h != null ? o.h : null }); } }
 // ---------- the pavements: a ring round every block, with its kerb ----------
 function buildPavements() {
   for (const f of MAP.faces) {
@@ -202,12 +206,19 @@ function buildPavements() {
     const K = f.kerb, S = f.inner, n = K.length, tile = T('walk' + (f.area | 0) % 3), kerb = T('kerb');
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n, sw = f.swd[i]; if (sw < 0.5) continue;
-      const a = K[i], b = K[j], c = S[j], d = S[i], y = terrainH((a[0] + c[0]) / 2, (a[1] + c[1]) / 2) + 0.14;
+      const a = K[i], b = K[j], c = S[j], d = S[i];
       const L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 0.3) continue;
-      const g = chunkAt((a[0] + c[0]) / 2, (a[1] + c[1]) / 2).geo;
-      g.quad([a[0], y, a[1]], [b[0], y, b[1]], [c[0], y, c[1]], [d[0], y, d[1]], [0, 0, L / 4, sw / 4], tile, null, [0, 1, 0]);
-      const dx = (b[0] - a[0]) / L, dz = (b[1] - a[1]) / L;
-      wall(g, a[0], a[1], dx, dz, L, y - 0.14, y, kerb);
+      // in pieces where a tunnel's open cut crosses the pavement (the cut's mouth stays open)
+      const runs = []; let run = null;
+      for (let t = 0; t <= 1.0001; t += Math.min(1, 2 / L)) { const tt = Math.min(1, t), cut = inOpenCut(lerp(a[0], b[0], tt), lerp(a[1], b[1], tt), -11); if (!cut) { if (!run) { run = [tt, tt]; runs.push(run); } run[1] = tt; } else run = null; }
+      for (const [t0, t1] of runs) {
+        if (t1 - t0 < 0.02 / L * 2) continue;
+        const A = [lerp(a[0], b[0], t0), lerp(a[1], b[1], t0)], B = [lerp(a[0], b[0], t1), lerp(a[1], b[1], t1)], Cc = [lerp(d[0], c[0], t1), lerp(d[1], c[1], t1)], D = [lerp(d[0], c[0], t0), lerp(d[1], c[1], t0)];
+        const y = terrainH((A[0] + Cc[0]) / 2, (A[1] + Cc[1]) / 2) + 0.14, Lr = L * (t1 - t0), g = chunkAt((A[0] + Cc[0]) / 2, (A[1] + Cc[1]) / 2).geo;
+        g.quad([A[0], y, A[1]], [B[0], y, B[1]], [Cc[0], y, Cc[1]], [D[0], y, D[1]], [0, 0, Lr / 4, sw / 4], tile, null, [0, 1, 0]);
+        const dx = (b[0] - a[0]) / L, dz = (b[1] - a[1]) / L;
+        wall(g, A[0], A[1], dx, dz, Lr, y - 0.14, y, kerb);
+      }
     }
   }
 }
@@ -306,7 +317,7 @@ function lampPost(x, z, yaw, dbl, y) {
 function buildFurniture() {
   const r = mulberry(1234);
   for (const e of MAP.edges) {
-    if (e.lvl || e.ramp || !e.strip || e.K.cls < 1 || e.kind === 'rural') continue;
+    if (e.lvl || e.ramp || e.tunnel || !e.strip || e.K.cls < 1 || e.kind === 'rural') continue;
     const S = e.strip, pts = S.pts, L = polyLen(pts), hw = e.w / 2, sw = e.K.sw;
     // lamps alternate sides down the street; trees between them on the wider roads; scooters along the kerb
     for (let s = 12, k = 0; s < L - 8; s += 26, k++) {

@@ -26,6 +26,20 @@ const GK = { asphalt: 0, grass: 1, sand: 2, water: 3, gravel: 4, concrete: 5, ke
 const GK_MU = [1.0, 0.55, 0.5, 0.2, 0.7, 0.95, 0.9, 0.92, 0.6], GK_DRAG = [0, 0.09, 0.14, 0.6, 0.05, 0.0, 0.02, 0.01, 0.08];
 function road(kind, pts, o) { const rd = Object.assign({ kind, pts, w: RK[kind].w, id: MAP.roads.length, lvl: 0 }, o || {}); MAP.roads.push(rd); return rd; }
 function roadR(kind, pts, o) { return road(kind, pts.map(R2), o); }
+// the corners of a polyline rounded off: each inner vertex becomes an arc of radius R (n points), tangent to both legs
+function fillet(pts, R, n) {
+  const out = [pts[0]];
+  for (let i = 1; i + 1 < pts.length; i++) {
+    const [ax, az] = pts[i - 1], [bx, bz] = pts[i], [cx, cz] = pts[i + 1];
+    const u = [ax - bx, az - bz], v = [cx - bx, cz - bz], lu = Math.hypot(u[0], u[1]), lv = Math.hypot(v[0], v[1]); u[0] /= lu; u[1] /= lu; v[0] /= lv; v[1] /= lv;
+    const th = Math.acos(clamp(u[0] * v[0] + u[1] * v[1], -1, 1)), d = Math.min(R / Math.tan(th / 2), lu * 0.45, lv * 0.45);   // the tangent length, kept within the legs
+    const p0 = [bx + u[0] * d, bz + u[1] * d], p1 = [bx + v[0] * d, bz + v[1] * d];
+    const bis = [u[0] + v[0], u[1] + v[1]], lb = Math.hypot(bis[0], bis[1]) || 1, r = d * Math.tan(th / 2), cen = [bx + bis[0] / lb * r / Math.sin(th / 2), bz + bis[1] / lb * r / Math.sin(th / 2)];
+    const a0 = Math.atan2(p0[1] - cen[1], p0[0] - cen[0]), a1 = Math.atan2(p1[1] - cen[1], p1[0] - cen[0]); let da = a1 - a0; while (da > Math.PI) da -= TAU; while (da < -Math.PI) da += TAU;
+    for (let k = 0; k <= n; k++) { const a = a0 + da * k / n; out.push([cen[0] + Math.cos(a) * r, cen[1] + Math.sin(a) * r]); }
+  }
+  out.push(pts[pts.length - 1]); return out;
+}
 // ---------- the layout ----------
 function layoutMap() {
   // ---- the water: the harbour channel and the sea beyond it, 旗津 across the channel, 蓮池潭 in the north ----
@@ -92,7 +106,10 @@ function layoutMap() {
   roadR('rural', [[-3150, 1360], [-2800, 1760], [-2350, 2320], [-1850, 3000], [-1420, 3700], [-1200, 4300], [-1100, 4700]], { name: '旗津路' });
   roadR('rural', [[-3250, 1420], [-3150, 1360]], { name: '廟前路' });
   // ---- 過港隧道: down under the harbour from the new bay's quay to 旗津 ----
-  roadR('tunnel', [[-240, 3575], [-1420, 3700]], { name: '過港隧道', tunnel: true, depth: 9, rampL: 150 });
+  // the mainland ramp drops south from 中華五路 beside the quay, the tube runs under the channel, and the 旗津 ramp comes up
+  // along the island's spine west of 旗津路, joined to it by a short road; both ramps lie on land, and the tube only is covered
+  roadR('tunnel', fillet([[-150, 3450], [-150, 3720], [-1500, 3740], [(899 - 1900) / 0.55, (2915.6 - 1100) / 0.55]], 110, 6), { name: '過港隧道', tunnel: true, depth: 9, rampL: 130 });
+  road('rural', [[899, 2915.6], [875, 2884], [872, 2860], [885, 2838], [905, 2826], [925, 2820]], { name: '隧道路' });   // (map metres) on from the mouth, bending round to 旗津路
   // ---- 國道一號 up the east edge, elevated, with ramps at 中正 and 九如 ----
   roadR('highway', [[2900, -2100], [2900, 4700]], { name: '國道一號', lvl: 1, h: 9 });
   roadR('ramp', [[2881, -300], [2800, -150], [2680, -30], [2600, 0]], { name: '中正交流道', ramp: true, h0: 9, h1: 0 });
@@ -124,7 +141,7 @@ function clipRoadsToLand() {
         if (k === n && i + 2 < pts.length) break;
         const t = k / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t, g = groundKind(x, z);
         // named roads bridge the river; lanes stop at it, at the parks and at the hill
-        const ok = (g !== GK.water || (!rd.auto && riverDist(x, z) < 30)) && (rd.auto ? terrainH(x, z) < 4 && g !== GK.park : true) && (!rd.auto || !(x < MAP.core.x0 + 1 || x > MAP.core.x1 - 1));
+        const ok = (g !== GK.water || (!rd.auto && riverDist(x, z) < 30)) && (rd.auto ? terrainH(x, z) < 4 && g !== GK.park && !inOpenCut(x, z, 6) : true) && (!rd.auto || !(x < MAP.core.x0 + 1 || x > MAP.core.x1 - 1));
         if (ok) { if (!cur) { cur = []; runs.push(cur); } if (!cur.length || Math.hypot(cur[cur.length - 1][0] - x, cur[cur.length - 1][1] - z) > 0.5) cur.push([x, z]); } else cur = null;
       }
     }
@@ -143,7 +160,7 @@ function clipRoadsToLand() {
 // road stops short inside a block (a dead end in a block would be a spike in the block's outline)
 function snapRoadEnds() {
   for (const rd of MAP.roads) {
-    if (rd.lvl || rd.ramp || rd.kind === 'hill') continue;
+    if (rd.lvl || rd.ramp || rd.tunnel || rd.kind === 'hill') continue;   // a tunnel's mouths are placed exactly
     for (const end of [0, 1]) {
       const n = rd.pts.length; if (n < 2) continue;
       const P = end ? rd.pts[n - 1] : rd.pts[0], Q = end ? rd.pts[n - 2] : rd.pts[1];
@@ -151,7 +168,7 @@ function snapRoadEnds() {
       // crossings of the last segment, extended 45 m past the end, with every other road
       let fwd = null, back = null;
       for (const o of MAP.roads) {
-        if (o === rd || o.lvl || o.ramp) continue;
+        if (o === rd || o.lvl || o.ramp || o.tunnel) continue;   // nothing snaps onto a tunnel: it runs beneath
         for (let i = 0; i + 1 < o.pts.length; i++) {
           const h = segX(Q[0], Q[1], P[0] + dx * 45, P[1] + dz * 45, o.pts[i][0], o.pts[i][1], o.pts[i + 1][0], o.pts[i + 1][1]); if (!h) continue;
           const s = h[0] * (L + 45);   // distance from Q along the segment
@@ -186,7 +203,7 @@ function buildGraph() {
   // a road's end lying on another road is a T junction
   for (const rd of MAP.roads) for (const end of [0, 1]) {
     const ev = rd.ev[end], lvl = ev.node.lvl;
-    for (const o of MAP.roads) { if (o === rd || o.ramp || o.lvl !== lvl) continue; const n = nearestOn(o, ev.node.x, ev.node.z); if (n && n.d < 2.5 && n.s > 1 && n.s < o.len - 1) o.ev.push({ s: n.s, node: ev.node }); }
+    for (const o of MAP.roads) { if (o === rd || o.ramp || o.tunnel || o.lvl !== lvl) continue; const n = nearestOn(o, ev.node.x, ev.node.z); if (n && n.d < 2.5 && n.s > 1 && n.s < o.len - 1) o.ev.push({ s: n.s, node: ev.node }); }
   }
   // crossings
   for (let i = 0; i < MAP.roads.length; i++) for (let j = i + 1; j < MAP.roads.length; j++) {
@@ -243,7 +260,13 @@ function buildGraph() {
   MAP.elev = edges.filter((e) => e.h0 != null || e.hill);
   MAP.trenches = []; for (const rd of MAP.roads) if (rd.tunnel) { rd.len = rd.len || polyLen(rd.pts); let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const [x, z] of rd.pts) { x0 = Math.min(x0, x); z0 = Math.min(z0, z); x1 = Math.max(x1, x); z1 = Math.max(z1, z); } MAP.trenches.push({ rd, pts: rd.pts, bb: [x0 - 16, z0 - 16, x1 + 16, z1 + 16] }); }
 }
+// within `pad` metres of a tunnel's open cut (its slopes included)
+function inOpenCut(x, z, pad) {
+  for (const rd of MAP.roads) { if (!rd.tunnel) continue; const n = nearestOnPts(rd.pts, x, z); if (n.d < rd.w / 2 + 13 + (pad || 0) && tunnelH(rd, n.s) > TUN_COVER) return true; }
+  return false;
+}
 // the depth of a tunnel road at distance s along it: level at both mouths, down a ramp, flat beneath the water
+const TUN_COVER = -3.2;   // the floor depth from which a tunnel is roofed over: above it an open cut, below it a tube under the ground
 function tunnelH(rd, s) { const L = rd.len || polyLen(rd.pts), R = rd.rampL; const k = s < R ? sstep(s / R) : s > L - R ? sstep((L - s) / R) : 1; return -rd.depth * k; }
 function nearestOn(rd, x, z) {
   let best = null;
@@ -366,7 +389,15 @@ function paintKindsRoads() {
   for (const e of MAP.edges) if (!e.lvl && !e.ramp && !e.tunnel && e.K.sw) fillK(GK.walk, (c) => strokePts(c, e.pts, e.w + e.K.sw * 2, 1));
   for (const e of MAP.edges) if (!e.lvl && !e.ramp && !e.tunnel) fillK(GK.asphalt, (c) => strokePts(c, e.pts, e.w, 1));
   for (const n of MAP.nodes) if (n.ring) fillK(GK.asphalt, (c) => { c.beginPath(); c.arc(n.x, n.z, 46, 0, TAU); c.fill(); });
+  // the open cuts down into the tunnels: concrete slopes, then the asphalt of the ramp (the covered part keeps the ground above it)
+  for (const rd of MAP.roads) if (rd.tunnel) for (const [kind, r] of [[GK.concrete, rd.w / 2 + 9], [GK.asphalt, rd.w / 2 + 0.6]]) fillK(kind, (c) => tunnelCuts(c, rd, r, 1));
   readKinds();
+}
+// dots along the open (uncovered) stretches of a tunnel road, radius r, for a fill
+function tunnelCuts(c, rd, r, k) {
+  const L = rd.len || polyLen(rd.pts); c.beginPath();
+  for (let s = 0; s <= L; s += 2.5) { if (tunnelH(rd, s) <= TUN_COVER) continue; const p = polyAt(rd.pts, s); c.moveTo((p.x + r) * k, p.z * k); c.arc(p.x * k, p.z * k, r * k, 0, TAU); }
+  c.fill();
 }
 function paintGround() {
   const W = MAP.W, px = MAP.px, N = Math.round(W / px), g = canvas(N, N).getContext('2d'), k = 1 / px;
@@ -392,7 +423,8 @@ function paintGround() {
   for (const e of MAP.edges) if (!e.lvl && !e.ramp && e.K.sw) { g.strokeStyle = '#cfcac0'; strokePts(g, e.pts, e.w + e.K.sw * 2, k); }
   for (const e of MAP.edges) if (!e.lvl && !e.ramp && !e.tunnel) { g.strokeStyle = e.K.cls >= 2 ? '#4e4e56' : '#585860'; strokePts(g, e.pts, e.w, k); }
   for (const e of MAP.edges) if (e.lvl || e.ramp) { g.strokeStyle = '#6a6a72'; strokePts(g, e.pts, e.w, k); }
-  for (const e of MAP.edges) if (e.tunnel) { g.strokeStyle = '#7a6a72'; g.setLineDash([6 * k, 6 * k]); strokePts(g, e.pts, e.w * 0.5, k); g.setLineDash([]); }
+  // the open cuts: the concrete of the trench, then the asphalt of the ramps
+  for (const rd of MAP.roads) if (rd.tunnel) { g.fillStyle = '#9a968e'; tunnelCuts(g, rd, rd.w / 2 + 9, k); g.fillStyle = '#585860'; tunnelCuts(g, rd, rd.w / 2 + 0.6, k); }
   MAP.ground = g.canvas;
 }
 function groundKind(x, z) { const W = MAP.kindW, i = Math.floor(z), j = Math.floor(x); if (i < 0 || j < 0 || i >= W || j >= W) return GK.grass; return MAP.kind[i * W + j]; }
@@ -413,7 +445,7 @@ function terrainH(x, z) {
   const qx = (x - 112) / 130, qz = (z - 1787) / 120, q = Math.sqrt(qx * qx + qz * qz); if (q < 1) { const k = 1 - q; h += k * k * 26; }
   if (x > 1080 && x < 1400 && z > -10 && z < 1970) { const d = riverDist(x, z); if (d < 34) h -= 2.6 * sstep(clamp((34 - d) / 12, 0, 1)); }
   // the open cuts down into the tunnel
-  for (const t of MAP.trenches) { if (x < t.bb[0] || x > t.bb[2] || z < t.bb[1] || z > t.bb[3]) continue; const n = nearestOnPts(t.pts, x, z); if (n.d < 13) { const floor = tunnelH(t.rd, n.s); if (floor < h) h = lerp(h, floor, sstep(clamp((13 - n.d) / 6, 0, 1))); } }
+  for (const t of MAP.trenches) { if (x < t.bb[0] || x > t.bb[2] || z < t.bb[1] || z > t.bb[3]) continue; const n = nearestOnPts(t.pts, x, z); if (n.d < 13) { const floor = tunnelH(t.rd, n.s); if (floor > TUN_COVER && floor < h) h = lerp(h, floor, sstep(clamp((13 - n.d) / 6, 0, 1))); } }
   return h;
 }
 // the surface under the car: the terrain, or an elevated road when the car is up on one
@@ -424,7 +456,7 @@ function groundH(x, z, yNow) {
     const bb = e.bb; if (x < bb[0] || x > bb[2] || z < bb[1] || z > bb[3]) continue;
     const n = nearestOnPts(e.pts, x, z); if (n.d > e.w / 2 + 2.5) continue;
     if (e.hill) { if (n.d < e.w / 2 + 1) h += 0.3; continue; }
-    if (e.tunnel) { if (n.d <= e.w / 2 + 1) { GH.tunnel = true; return tunnelH(e.rd, e.s0 + n.s); } continue; }
+    if (e.tunnel) { if (n.d <= e.w / 2 + 1) { const fl = tunnelH(e.rd, e.s0 + n.s); if (fl > TUN_COVER || (yNow != null && yNow < fl + 3.5)) { GH.tunnel = true; return fl; } } continue; }
     const t = n.s / Math.max(1, e.len), he = e.ramp ? lerp(e.h0, e.h1, sstep(t)) : e.h0;
     if (yNow == null || Math.abs(yNow - he) < 3.5 || he < 0.5) { h = Math.max(h, he - (n.d > e.w / 2 ? (n.d - e.w / 2) * 0.6 : 0)); }
   }

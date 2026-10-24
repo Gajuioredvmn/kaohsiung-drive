@@ -5,6 +5,8 @@
 
 function buildLandmarkLots() {
   const L = MAP.landmarks;
+  // nothing is built over a tunnel's open cut: a lot along each ramp while it is still open to the sky
+  for (const rd of MAP.roads) if (rd.tunnel) { const Ln = rd.len || polyLen(rd.pts), R = rd.w / 2 + 15; for (let s = 0; s <= Ln; s += 8) { if (tunnelH(rd, s) <= TUN_COVER) continue; const p = polyAt(rd.pts, s); lot(p.x - R, p.z - R, p.x + R, p.z + R); } }
   lot(L.八五大樓[0] - 75, L.八五大樓[1] - 50, L.八五大樓[0] + 75, L.八五大樓[1] + 95);
   lot(L.高雄車站[0] - 110, L.高雄車站[1] - 40, L.高雄車站[0] + 110, L.高雄車站[1] + 22);
   lot(L.駁二[0] - 160, L.駁二[1] - 40, L.駁二[0] + 200, L.駁二[1] + 70);
@@ -115,7 +117,7 @@ function buildHarbour() {
   const mouths = MAP.roads.filter((rd) => rd.tunnel).flatMap((rd) => [rd.pts[0], rd.pts[rd.pts.length - 1]]);
   for (let s = 60; s < polyLen(pts) - 60; s += 150) {
     const p = polyAt(pts, s), rx_ = -Math.cos(p.yaw), rz_ = Math.sin(p.yaw);   // right of travel: the water side
-    if (mouths.some((m) => Math.hypot(m[0] - p.x, m[1] - p.z) < 90)) continue;   // not across the tunnel's mouth
+    if (inOpenCut(p.x, p.z, 12) || mouths.some((m) => Math.hypot(m[0] - p.x, m[1] - p.z) < 40)) continue;   // not across the tunnel's cut
     const cx = p.x + rx_ * 14, cz = p.z + rz_ * 14, yaw = Math.atan2(-rx_, -rz_);
     for (const o of [-9, 9]) { const ax = Math.cos(yaw), az = -Math.sin(yaw); box(cx + ax * o, 0, cz + az * o, yaw, 2, 36, 2, red, red, red); box(cx + ax * o - rx_ * 10, 0, cz + az * o - rz_ * 10, yaw, 2, 36, 2, red, red, red); }
     box(cx, 36, cz, yaw, 22, 2, 2, red, red, red); box(cx - rx_ * 10, 37, cz - rz_ * 10, yaw, 2, 1.6, 52, red, red, red); box(cx, 30, cz, yaw, 4, 3, 3, T('white'), T('white'), T('white'));
