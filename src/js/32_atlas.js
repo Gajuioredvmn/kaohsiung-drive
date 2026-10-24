@@ -240,5 +240,6 @@ function atlasPaint() {
   tile('jproof', (() => { const px = new Pix(S, S); for (let y = 0; y < S; y += 8) for (let x = 0; x < S; x += 12) { px.rect(x + (y % 16 ? 6 : 0), y, 12, 8, shadeHex(0x3a4a4a, 0.9 + hash2(x, y) * 0.2)); px.rect(x + (y % 16 ? 6 : 0), y, 12, 2, 0x202a2a); } return px; })());
   tile('glass85', (() => { const px = new Pix(S, S); for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) px.set(x, y, y % 32 < 5 ? 0xb8c4cc : (hash2(x >> 3, y >> 3) < 0.15 ? 0x9ab8d0 : (x % 8 === 0 ? 0x4a6a88 : mixHex(0x5a84a8, 0x7aa4c8, (y % 32) / 32)))); return px; })());
   const names = new Set(); for (const rd of MAP.roads) if (rd.name && !names.has(rd.name)) { names.add(rd.name); tile('rn_' + rd.name, paintRoadName(rd.name)); }
+  moreTiles();
   atlasBuild();
 }

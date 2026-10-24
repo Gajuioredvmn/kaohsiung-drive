@@ -59,6 +59,7 @@ function layoutMap() {
   MAP.parks.push([[-2100, -1160], [2500, -1160], [2500, -1040], [-2100, -1040]].map(R2));
   MAP.parks.push([[1000, 30], [1540, 30], [1540, 470], [1000, 470]]);
   // ---- the east–west roads, north to south (real names) ----
+  roadR('avenue', [[-650, -1660], [900, -1660]], { name: '裕誠路', night: [-610, -400] });   // 瑞豐夜市 along it, beside 巨蛋
   roadR('boulevard', [[-1500, -1400], [3000, -1400]], { name: '九如路' });
   roadR('boulevard', [[-1900, -950], [2600, -950]], { name: '建國路' });
   roadR('avenue', [[-2300, -650], [2400, -650]], { name: '七賢路' });

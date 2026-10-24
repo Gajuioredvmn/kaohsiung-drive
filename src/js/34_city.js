@@ -2,7 +2,7 @@
 // Everything static is one of two things: a quad in a chunk's mesh (road strips, pavements, junctions) or an instanced
 // box (every house, column, sign, pole, tank and shed). Boxes carry their own tiles: the front gets a facade picture,
 // the sides and top a repeating tile. The city is cut into 300 m chunks so the renderer can skip what is far away.
-const CITY = { size: 300, chunks: new Map(), signals: [], lots: [], wheel: null, stats: {} };
+const CITY = { size: 300, chunks: new Map(), signals: [], lots: [], lamps: [], wheel: null, stats: {} };
 class Geo {
   constructor() { this.p = []; this.n = []; this.uv = []; this.t = []; this.c = []; this.i = []; this.nv = 0; }
   // a, b, c, d anticlockwise as seen from the front; uv = [u0, v0, u1, v1] with a at (u0, v0), c at (u1, v1)
@@ -311,6 +311,7 @@ function lampPost(x, z, yaw, dbl, y) {
   const y0 = y == null ? terrainH(x, z) + 0.14 : y, pole = T('grey'), lamp = T('white');
   box(x, y0, z, yaw, 0.22, 7.5, 0.22, pole, pole, pole);
   const ax = Math.cos(yaw), az = -Math.sin(yaw);
+  for (const side of dbl ? [-1, 1] : [1]) CITY.lamps.push({ x: x + ax * side * 2.0, y: y0 + 6.9, z: z + az * side * 2.0 });
   for (const side of dbl ? [-1, 1] : [1]) { box(x + ax * side * 1.1, y0 + 7.2, z + az * side * 1.1, yaw, 2.2, 0.16, 0.16, pole, pole, pole); box(x + ax * side * 2.0, y0 + 7.0, z + az * side * 2.0, yaw, 0.7, 0.25, 0.35, lamp, lamp, pole); }
   addSolid({ x, z, r: 0.25, h: 0.6 });
 }

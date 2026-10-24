@@ -15,6 +15,7 @@ function buildLandmarkLots() {
   lot(L.夢時代[0] - 90, L.夢時代[1] - 70, L.夢時代[0] + 90, L.夢時代[1] + 70);
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) lot(L.美麗島[0] + sx * 22, L.美麗島[1] + sz * 22, L.美麗島[0] + sx * 48, L.美麗島[1] + sz * 48);
   lot(L.旗津[0] - 30, L.旗津[1] - 30, L.旗津[0] + 30, L.旗津[1] + 30);
+  moreLots();
   // nothing is built under the ramps
   for (const rd of MAP.roads) if (rd.ramp) for (let i = 0; i + 1 < rd.pts.length; i++) lot(Math.min(rd.pts[i][0], rd.pts[i + 1][0]) - 9, Math.min(rd.pts[i][1], rd.pts[i + 1][1]) - 9, Math.max(rd.pts[i][0], rd.pts[i + 1][0]) + 9, Math.max(rd.pts[i][1], rd.pts[i + 1][1]) + 9);
   // temples and petrol stations get their plots now, before the houses are laid
@@ -168,9 +169,11 @@ function nightMarket() {
   const r = mulberry(66);
   for (const e of MAP.edges) {
     if (!e.rd.night || !e.strip) continue;
+    const rangeX = Array.isArray(e.rd.night) ? [Math.min(rx(e.rd.night[0]), rx(e.rd.night[1])), Math.max(rx(e.rd.night[0]), rx(e.rd.night[1]))] : null;   // only part of the road is the market
     const pts = e.strip.pts, L = polyLen(pts), hw = e.w / 2;
     for (let s = 8; s < L - 8; s += 4.2) for (const sd of [-1, 1]) {
-      const p = polyAt(pts, s), nx = Math.cos(p.yaw), nz = -Math.sin(p.yaw), x = p.x + nx * (hw - 1.6) * sd, z = p.z + nz * (hw - 1.6) * sd, yaw = p.yaw + (sd > 0 ? Math.PI / 2 : -Math.PI / 2), aw = T('awning' + r.int(0, 3));
+      const p = polyAt(pts, s); if (rangeX && (p.x < rangeX[0] || p.x > rangeX[1])) continue;
+      const _p = p, nx = Math.cos(p.yaw), nz = -Math.sin(p.yaw), x = p.x + nx * (hw - 1.6) * sd, z = p.z + nz * (hw - 1.6) * sd, yaw = p.yaw + (sd > 0 ? Math.PI / 2 : -Math.PI / 2), aw = T('awning' + r.int(0, 3));
       box(x, 0.03, z, yaw, 2.6, 1.0, 1.4, T('steel'), T('steel'), T('white')); box(x, 2.2, z + 0, yaw, 3.0, 0.3, 2.0, aw, aw, aw, null, 0, 0);
       const ax = Math.cos(yaw), az = -Math.sin(yaw); for (const q of [-1.3, 1.3]) box(x + ax * q, 0.03, z + az * q, yaw, 0.08, 2.2, 0.08, T('steel'), T('steel'), T('steel'));
       if (r() < 0.5) box(x, 1.0, z, yaw, 1.2, 0.8, 0.8, T('sh_eat' + r.int(0, 7)), T('steel'), T('steel'), null, 0, 0);
@@ -186,7 +189,7 @@ function lightCorridor() {
 }
 function buildLandmarks() {
   CITY.meshes = CITY.meshes || [];
-  build85(); buildMeiLiDao(); buildStation(); buildPier2(); buildMusicCentre(); buildExpo(); buildDreamMall(); buildDragonTiger(); buildHarbour(); buildQijin(); nightMarket(); lightCorridor();
+  buildMore(); build85(); buildMeiLiDao(); buildStation(); buildPier2(); buildMusicCentre(); buildExpo(); buildDreamMall(); buildDragonTiger(); buildHarbour(); buildQijin(); nightMarket(); lightCorridor();
   const r = mulberry(124);
   for (const s of CITY.sites) { if (s.kind === 'temple') temple(s.x, s.z, s.yaw, r); else gasStation(s.x, s.z, s.yaw, r); }
   CITY.stats.sites = CITY.sites.length;

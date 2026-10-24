@@ -89,8 +89,8 @@ function r3Ground() {
   const tex = new THREE.CanvasTexture(MAP.ground); tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
   const mat = new THREE.MeshLambertMaterial({ map: tex });
   const m = new THREE.Mesh(geo, mat); m.position.set(W / 2, 0, W / 2); scene3Add(m); R3.ground = m;
-  const sun = new THREE.DirectionalLight(0xfff0d8, 1.0); sun.position.set(R3.tod.sun[0] * 500, R3.tod.sun[1] * 500, R3.tod.sun[2] * 500); scene3Add(sun);
-  scene3Add(new THREE.AmbientLight(0xc0d0e8, 1.0));
+  const sun = new THREE.DirectionalLight(0xfff0d8, 1.0); sun.position.set(R3.tod.sun[0] * 500, R3.tod.sun[1] * 500, R3.tod.sun[2] * 500); scene3Add(sun); R3.sunLight = sun;
+  R3.ambLight = new THREE.AmbientLight(0xc0d0e8, 1.0); scene3Add(R3.ambLight);
 }
 function scene3Add(m) { R3.scene.add(m); }
 // the sky: a dome round the camera, hazy at the horizon and blue overhead, with a warm glow toward the sun
@@ -101,6 +101,27 @@ const SKY_FS = `precision mediump float; uniform vec3 top, horizon, haze, sunDir
 function r3Sky() {
   const geo = new THREE.SphereGeometry(2400, 32, 16), mat = new THREE.ShaderMaterial({ vertexShader: SKY_VS, fragmentShader: SKY_FS, uniforms: { top: { value: new THREE.Color(0x5a9ae0) }, horizon: { value: new THREE.Color(0xa8ccec) }, haze: { value: new THREE.Color(R3.tod.fog) }, sunDir: { value: R3.sun } }, side: THREE.BackSide, depthWrite: false, fog: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; m.renderOrder = -10; scene3Add(m); R3.sky = m; R3.scene.background = null;
+}
+// the time of day: the sky, the haze, the sun and the tint on everything (the lamps and headlights come on at night in r3FxUpdate)
+const TODS = {
+  day: { top: 0x5a9ae0, horizon: 0xa8ccec, fog: 0xc8dcea, tint: [1, 1, 1], sun: [-0.5, 0.72, 0.48], sunI: 1.0, sunC: 0xfff0d8, amb: 1.0, ambC: 0xc0d0e8 },
+  dusk: { top: 0x3a4a8a, horizon: 0xf0a070, fog: 0xe8b090, tint: [1.0, 0.84, 0.7], grade: [0.95, 0.82, 0.72], sun: [-0.85, 0.2, 0.48], sunI: 0.8, sunC: 0xffb070, amb: 0.75, ambC: 0xa090b0 },
+  night: { top: 0x060a1c, horizon: 0x18203a, fog: 0x10162a, tint: [0.42, 0.46, 0.6], grade: [0.38, 0.42, 0.62], sun: [0.3, 0.6, 0.4], sunI: 0.25, sunC: 0x8090c0, amb: 0.55, ambC: 0x5a6a90 },
+};
+function setTod(kind) {
+  const T = TODS[kind] || TODS.day; R3.todKind = kind in TODS ? kind : 'day'; R3.gradeDay = R3.gradeDay || [1.03, 1.0, 0.96];
+  R3.tod = { tint: T.tint, sky: T.horizon, fog: T.fog, sun: T.sun }; if (R3.sun) R3.sun.set(...T.sun).normalize();
+  if (R3.scene && R3.scene.fog) R3.scene.fog.color.setHex(T.fog);
+  if (R3.sky) { const u = R3.sky.material.uniforms; u.top.value.setHex(T.top); u.horizon.value.setHex(T.horizon); u.haze.value.setHex(T.fog); }
+  if (R3.sunLight) { R3.sunLight.intensity = T.sunI; R3.sunLight.color.setHex(T.sunC); R3.sunLight.position.set(T.sun[0] * 500, T.sun[1] * 500, T.sun[2] * 500); }
+  if (R3.ambLight) { R3.ambLight.intensity = T.amb; R3.ambLight.color.setHex(T.ambC); }
+  for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material]) { const u = m && m.uniforms; if (!u) continue; if (u.tint) u.tint.value.set(T.tint[0], T.tint[1], T.tint[2]); if (u.fogColor) u.fogColor.value.setHex(T.fog); }
+  if (R3.fxMesh) R3.fxMesh.material.uniforms.fogColor.value.setHex(T.fog);
+  // the darkness goes into the post pass's grade; without the post pass (quality off) the tint carries it instead
+  const g = T.grade || R3.gradeDay; if (R3.post && R3.post.comp) R3.post.comp.uniforms.grade.value.set(g[0], g[1], g[2]);
+  if (R3.fxMesh) { const u = R3.fxMesh.material.uniforms; if (u.tint) u.tint.value.set(Math.min(2.6, 1 / g[0]), Math.min(2.6, 1 / g[1]), Math.min(2.6, 1 / g[2])); }   // the glows stay bright through the grade
+  if (SET.quality === 'off' || R3.postFail) for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material]) { const u = m && m.uniforms; if (u && u.tint) u.tint.value.set(T.tint[0] * g[0] / R3.gradeDay[0], T.tint[1] * g[1] / R3.gradeDay[1], T.tint[2] * g[2] / R3.gradeDay[2]); }
+  if (R3.ground) { R3.ground.material.color.setRGB(T.tint[0], T.tint[1], T.tint[2]); }
 }
 // ---------- the city: the atlas, one flat mesh and one box mesh per chunk ----------
 function r3Atlas() {
@@ -180,7 +201,7 @@ function r3Props() {
   g2.setAttribute('iPos', A.pos); g2.setAttribute('iSize', A.size); g2.setAttribute('iUV', A.uv); g2.setAttribute('iFlip', A.flip);
   const m2 = new THREE.Mesh(g2, mat); m2.frustumCulled = false; scene3Add(m2); R3.peopleMesh = m2; R3.peopleA = A;
   // and the little things that change: the countdown digits on the signals, the brake lamps of the traffic
-  const N3 = 900, g3 = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g3.instanceCount = 0;
+  const N3 = 1600, g3 = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g3.instanceCount = 0;
   const B = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 3), 3), size: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 2), 2), uv: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 4), 4), flip: new THREE.InstancedBufferAttribute(new Float32Array(N3), 1) };
   for (const a of Object.values(B)) a.setUsage(THREE.DynamicDrawUsage);
   g3.setAttribute('iPos', B.pos); g3.setAttribute('iSize', B.size); g3.setAttribute('iUV', B.uv); g3.setAttribute('iFlip', B.flip);
@@ -201,6 +222,13 @@ function r3FxUpdate() {
   const bob = Math.sin(G.t * 3) * 0.25;
   if (!MIS.active) for (const j of MIS.avail) { put(j.icon, j.x, j.y == null ? (j.y = terrainH(j.x, j.z)) : j.y, j.z); if (j.kind === 'taxi') put(j.person || (j.person = 'person' + Math.floor(Math.random() * 8)), j.x + Math.cos(j.yaw) * 1.2, j.y, j.z - Math.sin(j.yaw) * 1.2); }
   else { const A = MIS.active; put(A.kind === 'trial' && A.cpi < A.cps.length - 1 ? 'mk_cp' : 'mk_goal', A.tx, terrainH(A.tx, A.tz) + 1.2 + bob, A.tz); if (A.kind === 'trial') for (let i = A.cpi + 1; i < Math.min(A.cps.length, A.cpi + 3); i++) put('mk_cp', A.cps[i][0], terrainH(A.cps[i][0], A.cps[i][1]) + 1.2 + bob, A.cps[i][1]); }
+  // after dark: the street lamps, and headlights on everything that moves
+  if (R3.todKind === 'night' || R3.todKind === 'dusk') {
+    const R = R3.todKind === 'night' ? 170 : 90;
+    for (const l of CITY.lamps) { const dx = l.x - cam.x, dz = l.z - cam.z; if (dx * dx + dz * dz < R * R) put('glow_lamp', l.x, l.y, l.z); }
+    const C = CAR; if (!CAMV.fp) { const hx = Math.sin(C.yaw), hz = Math.cos(C.yaw), rx_ = Math.cos(C.yaw), rz_ = -Math.sin(C.yaw), fx = C.x + hx * (C.P.L / 2 + 0.1), fz = C.z + hz * (C.P.L / 2 + 0.1); for (const sd of [-1, 1]) put('glow_head', fx + rx_ * sd * C.P.W * 0.34, C.y + 0.6, fz + rz_ * sd * C.P.W * 0.34); }
+    for (const v of TR.veh) { const dx = v.x - cam.x, dz = v.z - cam.z; if (dx * dx + dz * dz > 140 * 140) continue; const hx = Math.sin(v.yaw), hz = Math.cos(v.yaw); if (dx * hx + dz * hz > 0) continue; const rx_ = Math.cos(v.yaw), rz_ = -Math.sin(v.yaw), fx = v.x + hx * (v.L / 2 + 0.05), fz = v.z + hz * (v.L / 2 + 0.05), w = v.type === 'scooter' ? 0 : v.W * 0.32; if (w) { put('glow_head', fx + rx_ * w, v.y + 0.6, fz + rz_ * w); put('glow_head', fx - rx_ * w, v.y + 0.6, fz - rz_ * w); } else put('glow_head', fx, v.y + 0.6, fz); }
+  }
   for (const v of TR.veh) {
     if (!v.brake) continue; const dx = v.x - cam.x, dz = v.z - cam.z; if (dx * dx + dz * dz > 120 * 120) continue;
     const hx = Math.sin(v.yaw), hz = Math.cos(v.yaw); if (dx * hx + dz * hz < 0) continue;   // its tail toward us
