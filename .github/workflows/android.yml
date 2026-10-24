@@ -1,8 +1,6 @@
 name: android
+# the APK is built only on request (Actions → android → Run workflow); the game itself is the web page
 on:
-  push:
-    branches: [main]
-    paths: ['index.html', 'android/**', '.github/workflows/android.yml']
   workflow_dispatch:
 permissions:
   contents: write

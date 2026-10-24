@@ -157,6 +157,25 @@ function paintCarRear(spec, steer, brake, phase, opt) {
       if (Math.abs(ny) < 0.3 && Math.abs(nx) > 0.6) { const hi = nx < 0 ? P[3] : P[2]; const qq = q.map((p) => [p[0], p[1], p[2]]); const top = Math.max(qq[0][1], qq[1][1], qq[2][1], qq[3][1]), bot = Math.min(qq[0][1], qq[1][1], qq[2][1], qq[3][1]); const mid = bot + (top - bot) * 0.55; const up = qq.map((p) => [p[0], p[1] > mid ? p[1] : mid, p[2]]); const pq = up.map((p) => pr(p[0], p[1], p[2])); let dd = 0; for (const p of pq) dd += p[2]; dd /= 4; if (area(pq) > 0.01) items.push({ d: dd - 0.001, L: layer, draw: () => px.polyD(flat(pq), col, hi, 0.5) }); }
     }
   }
+  // ---- a roof: ordinary cars have one — a greenhouse lofted over the cockpit, glass on its sides and ends, paint on top ----
+  if (spec.roof && zR != null && zF != null) {
+    const rh = spec.roofH || 0.42, glass = 0x2e4e6e, glassHi = 0x6a9ac0, tint = (z) => (zR != null && z < zR + (zF - zR) * 0.3 ? glass : glass);
+    const cab = (z, kw, kh) => { const t = clamp(spec.wheels[1] - z / G.L, 0, 1), A = G.at(t), hw = A.hw * kw, belt = A.top, top = belt + rh * kh; return { z, pts: [[-hw, belt], [hw, belt], [hw * 0.94, top], [-hw * 0.94, top]] }; };
+    const C = [cab(zR + 0.02, 0.9, 0.08), cab(zR + (zF - zR) * 0.22, 0.88, 1), cab(zF - (zF - zR) * 0.2, 0.88, 1), cab(zF - 0.02, 0.9, 0.1)];
+    for (let k = 0; k + 1 < C.length; k++) {
+      const a = C[k], b = C[k + 1], mid = k === 1;
+      // top
+      face([[a.pts[3][0], a.pts[3][1], a.z], [a.pts[2][0], a.pts[2][1], a.z], [b.pts[2][0], b.pts[2][1], b.z], [b.pts[3][0], b.pts[3][1], b.z]], mid ? P[4] : glass, false, 0.001);   // the sloped ends are the rear window and the windscreen
+      // sides: glass, with a pale band near the top
+      for (const sx of [-1, 1]) {
+        const i0 = sx < 0 ? 0 : 1, i1 = sx < 0 ? 3 : 2;
+        const q = [[a.pts[i0][0], a.pts[i0][1], a.z], [a.pts[i1][0], a.pts[i1][1], a.z], [b.pts[i1][0], b.pts[i1][1], b.z], [b.pts[i0][0], b.pts[i0][1], b.z]];
+        const toward = sx * (camX - a.pts[i0][0]) > 0; if (!toward) continue;   // only the side the camera sees
+        face(q, mid ? tint(a.z) : shadeHex(glass, 0.8), false, 0.0005);
+        if (mid) { const hq = q.map((p, i) => [p[0], i === 0 || i === 3 ? p[1] + (q[1][1] - q[0][1]) * 0.55 : p[1] - (q[1][1] - q[0][1]) * 0.15, p[2]]); face(hq, glassHi, false, 0.0004); }
+      }
+    }
+  }
   // ---- the tail: the body colour in two bands, the lamps in their black band, the plate, the bumper and pipes ----
   const tail = secPts(S[0]).slice().reverse(), top0 = S[0].top, bot0 = S[0].bot, tH = top0 - bot0, hwT = S[0].hw;
   const TP = (u, v) => pr(u, v, zT);

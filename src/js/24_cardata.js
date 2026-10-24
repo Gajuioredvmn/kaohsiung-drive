@@ -101,3 +101,38 @@ const CREW = {
   arancia: [{ name: 'Sofia', hair: 0x6a2a1a, shirt: 0xffffff, style: 'pony', scarf: 0xd8242a }, { name: '豆豆', dog: true }],
   oro: [{ name: '新郎', hair: 0x1a1410, shirt: 0x1a1a1a, style: 'short' }, { name: '新娘', hair: 0x1a1410, shirt: 0xffffff, style: 'long', veil: true }],
 };
+
+// ---- the ordinary cars everyone starts with: a roof, a small engine, nothing to boast about ----
+const STARTERS = [
+  { id: 'duck', name: '小鴨 DUCK', en: 'City hatchback', color: 0xf2e24a, interior: 0x3a3a3e, top: 158, acc: 0.18, grip: 0.5, steer: 0.62, mass: 0.32, gears: 5, engine: 'i4', drive: 'fwd', roof: true, roofH: 0.5, starter: true,
+    desc: '1.2 升掀背小車，省油好停，上坡會哀。', L: 3.7, W: 1.68, clear: 0.17, rs: 0.1, tuck: 0.05, pw: 1.0, wheels: [0.18, 0.8], cockpit: [0.3, 0.75], rim: 'steel', rimCol: 0xb0b4b8,
+    a: KY([[0, 0.9], [0.1, 0.97], [0.9, 0.98], [1, 0.92]]),
+    yF: KY([[0, 0.78], [0.08, 0.9], [0.3, 0.94], [0.75, 0.94], [0.92, 0.88], [1, 0.76]]),
+    yC: KY([[0, 0.76], [0.08, 0.88], [0.29, 0.94], [0.3, 0.42], [0.75, 0.42], [0.76, 0.9], [1, 0.74]]),
+    xp: KY([[0, 0.84], [1, 0.86]]), tails: 'round', screen: 0.4 },
+  { id: 'uncle', name: '阿伯的房車 UNCLE', en: 'Family sedan', color: 0xc8ccd0, interior: 0x8a7a66, top: 176, acc: 0.26, grip: 0.52, steer: 0.5, mass: 0.58, gears: 5, engine: 'i4', drive: 'fwd', roof: true, roofH: 0.46, starter: true,
+    desc: '國民房車，坐得舒服，開起來像船。', L: 4.6, W: 1.76, clear: 0.16, rs: 0.09, tuck: 0.04, pw: 1.0, wheels: [0.17, 0.81], cockpit: [0.33, 0.68], rim: 'steel', rimCol: 0xb0b4b8,
+    a: KY([[0, 0.9], [0.08, 0.97], [0.92, 0.98], [1, 0.9]]),
+    yF: KY([[0, 0.7], [0.1, 0.86], [0.32, 0.9], [0.7, 0.9], [0.95, 0.84], [1, 0.7]]),
+    yC: KY([[0, 0.68], [0.1, 0.84], [0.32, 0.9], [0.33, 0.42], [0.68, 0.42], [0.69, 0.88], [1, 0.7]]),
+    xp: KY([[0, 0.82], [1, 0.84]]), tails: 'quad', screen: 0.42 },
+  { id: 'wagon', name: '旅行車 WAGGY', en: 'Station wagon', color: 0x3a6a9a, interior: 0x4a4a50, top: 184, acc: 0.3, grip: 0.56, steer: 0.52, mass: 0.66, gears: 5, engine: 'i4', drive: 'fwd', roof: true, roofH: 0.5, starter: true,
+    desc: '後面載得下一家人和一隻狗，彎道要慢。', L: 4.7, W: 1.78, clear: 0.17, rs: 0.09, tuck: 0.04, pw: 1.0, wheels: [0.17, 0.82], cockpit: [0.08, 0.68], rim: 'steel', rimCol: 0xb0b4b8,
+    a: KY([[0, 0.92], [0.06, 0.97], [0.94, 0.98], [1, 0.9]]),
+    yF: KY([[0, 0.86], [0.06, 0.92], [0.7, 0.92], [0.95, 0.84], [1, 0.7]]),
+    yC: KY([[0, 0.84], [0.06, 0.92], [0.07, 0.42], [0.68, 0.42], [0.69, 0.9], [1, 0.7]]),
+    xp: KY([[0, 0.84], [1, 0.84]]), tails: 'strip', screen: 0.42 },
+  { id: 'suv', name: '都市休旅 TAKE', en: 'Compact SUV', color: 0x8a3a2a, interior: 0x2a2a2e, top: 172, acc: 0.3, grip: 0.5, steer: 0.46, mass: 0.74, gears: 6, engine: 'i4', drive: 'awd', roof: true, roofH: 0.55, starter: true,
+    desc: '底盤高、視野好，草地和沙灘比較不怕。', L: 4.5, W: 1.84, clear: 0.26, rs: 0.1, tuck: 0.05, pw: 1.0, wheels: [0.18, 0.8], cockpit: [0.1, 0.68], rim: 'steel', rimCol: 0xb0b4b8,
+    a: KY([[0, 0.92], [0.06, 0.98], [0.94, 0.98], [1, 0.9]]),
+    yF: KY([[0, 0.9], [0.06, 1.0], [0.7, 1.0], [0.95, 0.92], [1, 0.8]]),
+    yC: KY([[0, 0.88], [0.06, 1.0], [0.09, 0.5], [0.68, 0.5], [0.69, 0.98], [1, 0.8]]),
+    xp: KY([[0, 0.86], [1, 0.86]]), tails: 'strip', screen: 0.42 },
+  { id: 'cab', name: '小黃 TAXI', en: 'Taxi', color: 0xf2c21a, interior: 0x3a3a3e, top: 170, acc: 0.24, grip: 0.52, steer: 0.5, mass: 0.6, gears: 5, engine: 'i4', drive: 'fwd', roof: true, roofH: 0.46, starter: true,
+    desc: '跑了三十萬公里的小黃，引擎還很硬朗。', L: 4.6, W: 1.76, clear: 0.16, rs: 0.09, tuck: 0.04, pw: 1.0, wheels: [0.17, 0.81], cockpit: [0.33, 0.68], rim: 'steel', rimCol: 0xb0b4b8,
+    a: KY([[0, 0.9], [0.08, 0.97], [0.92, 0.98], [1, 0.9]]),
+    yF: KY([[0, 0.7], [0.1, 0.86], [0.32, 0.9], [0.7, 0.9], [0.95, 0.84], [1, 0.7]]),
+    yC: KY([[0, 0.68], [0.1, 0.84], [0.32, 0.9], [0.33, 0.42], [0.68, 0.42], [0.69, 0.88], [1, 0.7]]),
+    xp: KY([[0, 0.82], [1, 0.84]]), tails: 'quad', screen: 0.42 },
+];
+CARS.unshift(...STARTERS);

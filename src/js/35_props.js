@@ -1,106 +1,100 @@
-// ===================== what stands on the map: buildings, trees, lamps, the harbour's cranes — painted pixels, placed along the roads =====================
-// Every prop is a picture stood upright (a billboard that turns to face the camera about the vertical) with a footprint
-// on the ground the car cannot pass through. Pictures are painted once into a few atlases; props only hold an index.
-const PROPS = { kinds: {}, list: [], grid: new Map(), cell: 40, atlas: [] };
-function propKind(name, px, hM, o) { PROPS.kinds[name] = Object.assign({ name, px, hM, wM: (hM * px.w) / px.h, solid: true, fx: 0, fz: 0 }, o || {}); }
-// ---------- painters ----------
-const PAL_WALL = [0xe8e0d0, 0xd8cfc0, 0xc8c8c8, 0xe0d6c8, 0xf0e8d8, 0xd0d8dc, 0xc9b9a0];
-function paintTownhouse(seed, floors) {
-  const r = mulberry(seed), W = 36, H = 22 + floors * 16, px = new Pix(W, H), wall = r.pick(PAL_WALL);
-  px.rect(0, 0, W, H, wall);
-  for (let f = 0; f < floors; f++) { const y = 8 + f * 16; for (let x = 4; x < W - 6; x += 10) { px.rect(x, y, 7, 9, 0x3a5a7a); px.rect(x + 1, y + 1, 5, 3, 0x9ac0e0); if (r() < 0.35) px.rect(x - 1, y + 9, 9, 2, 0x8a8a90); } if (r() < 0.5) px.rect(0, y + 13, W, 2, shadeHex(wall, 0.8)); }
-  // the shop at the bottom with its sign, and a rooftop water tank
-  px.rect(0, H - 14, W, 14, 0x404048); px.rect(3, H - 11, W - 6, 8, r.pick([0xd82a2a, 0x2a5ad0, 0xf2c21a, 0x18884a])); px.rect(2, H - 20, W - 4, 5, r.pick([0xff5a3a, 0xffd23a, 0x3ad0ff, 0xffffff]));
-  px.rect(W - 10, 0, 6, 6, 0x9aa0a8); px.rect(W - 9, -2, 4, 2, 0x9aa0a8);
-  px.outline(0x1a1820);
-  return px;
-}
-function paintBlock(seed, floors) {
-  const r = mulberry(seed), W = 64, H = 10 + floors * 14, px = new Pix(W, H), wall = r.pick([0xdcd6cc, 0xc8ccd0, 0xe8e2d4, 0xb8c4cc]);
-  px.rect(0, 0, W, H, wall);
-  for (let f = 0; f < floors; f++) { const y = 6 + f * 14; for (let x = 4; x < W - 6; x += 9) { px.rect(x, y, 6, 8, 0x2e4a66); px.rect(x + 1, y + 1, 4, 3, 0x8ab4d8); if (r() < 0.3) { px.rect(x - 1, y + 8, 8, 3, 0x7a8088); px.rect(x, y + 6, 6, 2, 0x4a5058); } } px.rect(0, y + 11, W, 1, shadeHex(wall, 0.82)); }
-  px.rect(0, H - 8, W, 8, 0x3a3a44); for (let x = 3; x < W; x += 12) px.rect(x, H - 6, 8, 5, 0x8ab0c8);
-  px.outline(0x1a1820);
-  return px;
-}
-function paintTower(seed) {
-  const r = mulberry(seed), W = 50, H = 200, px = new Pix(W, H), g = [0x1c4050, 0x2a6478, 0x3c8aa0, 0x6abccc];
-  const blk = (x0, w, y0, y1) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x0 + w; x++) { const e = x === x0 || x === x0 + w - 1; let c = e ? g[0] : x < x0 + w * 0.3 ? g[3] : x < x0 + w * 0.6 ? g[2] : g[1]; if (!e && y % 3 === 0) c = shadeHex(c, 0.8); px.set(x, y, c); } };
-  blk(2, 16, 110, H); blk(32, 16, 110, H); blk(2, 46, 96, 110); blk(5, 40, 70, 96); blk(9, 32, 46, 70); blk(14, 22, 26, 46); blk(19, 12, 12, 26); for (let y = 0; y < 12; y++) px.set(25, y, 0xd8dce0); px.set(25, 0, 0xff3a3a);
-  px.outline(0x0a1418);
-  return px;
-}
-function paintTemple(seed) {
-  const r = mulberry(seed), W = 70, H = 54, px = new Pix(W, H);
-  px.rect(6, 22, 58, 32, 0xc8301e); px.rect(10, 30, 50, 24, 0xe0b060); for (let x = 12; x < 58; x += 10) px.rect(x, 32, 6, 20, 0x9a2a1a);
-  px.poly([0, 22, 70, 22, 60, 10, 10, 10], 0x2a6a4a); px.poly([8, 10, 62, 10, 54, 2, 16, 2], 0x2a6a4a); px.rect(30, 0, 10, 3, 0xf2c21a);
-  for (let x = 2; x < 70; x += 8) px.rect(x, 20, 3, 3, 0xf2c21a); px.rect(26, 36, 18, 18, 0x3a1a10);
-  px.outline(0x1a1410);
-  return px;
+// ===================== the billboards: trees, scooters, boats, signal lamps — painted pixels stood upright =====================
+// Every prop is a picture that turns to face the camera about the vertical. Pictures are painted once into one atlas;
+// props only hold an index. Trees and the like also register a round collider for the car.
+const PROPS = { kinds: {}, list: [], atlas: null };
+const PR = 16;   // pixels to the metre for the props
+function propKind(name, px, hM, o) { PROPS.kinds[name] = Object.assign({ name, px, hM, wM: (hM * px.w) / px.h, solid: false }, o || {}); }
+// a leafy blob: four tones from the shadowed underside up to the sunlit top, dithered between them, a rough edge
+function blob(px, cx, cy, rx, ry, tones, r) {
+  for (let j = Math.floor(cy - ry); j <= Math.ceil(cy + ry); j++) for (let i = Math.floor(cx - rx); i <= Math.ceil(cx + rx); i++) {
+    const dx = (i + 0.5 - cx) / rx, dy = (j + 0.5 - cy) / ry, d2 = dx * dx + dy * dy; if (d2 > 1) continue;
+    if (d2 > 0.72 && hash2(i * 1.3 + cx, j * 1.7 + cy) < (d2 - 0.72) * 2.5) continue;   // a ragged rim of leaves
+    const l = clamp(0.55 - dy * 0.55 - dx * 0.2 + Math.sqrt(1 - d2) * 0.35, 0, 1), t = l * (tones.length - 1), k = Math.min(tones.length - 2, Math.floor(t));
+    px.dset(i, j, tones[k], tones[k + 1], smooth(0.3, 0.7, t - k));
+  }
 }
 function paintTree(seed, kind) {
   const r = mulberry(seed);
-  if (kind === 'palm') { const W = 30, H = 60, px = new Pix(W, H); px.rect(13, 20, 4, 40, 0x8a6a3a); for (let k = 0; k < 7; k++) { const a = (k / 7) * TAU; px.line(15, 20, 15 + Math.cos(a) * 13, 20 + Math.sin(a) * 9 - 4, 0x2a8a3a, 3); } px.ellipse(15, 18, 5, 4, 0x4ab04a); px.outline(0x102010); return px; }
-  const W = 44, H = 50, px = new Pix(W, H), g = [0x1e5a2a, 0x2f7e30, 0x52a83c, 0x7acc4c];
-  px.rect(19, 30, 6, 20, 0x5a4a30);
-  for (let k = 0; k < 9; k++) { const x = 8 + r() * 28, y = 8 + r() * 18, R = 7 + r() * 7; for (let i = 0; i < 4; i++) px.ellipse(x - i, y - i * 1.2, R - i * 1.5, (R - i * 1.5) * 0.8, g[i]); }
-  px.outline(0x102010);
+  if (kind === 'palm') {
+    const H = 11 * PR, W = 7 * PR, px = new Pix(W, H), cx = W / 2, top = 2.2 * PR;
+    // the trunk leans a little and is ringed
+    for (let y = top; y < H; y++) { const x = cx + Math.sin((y - top) / H * 1.2) * 6 - 3, w = 5 + (y - top) / H * 5; px.rect(x - w / 2, y, w, 1, (y % 6 < 2) ? 0x6a4a2a : 0x8a6a3a); px.rect(x - w / 2, y, 2, 1, 0x9a7a4a); }
+    const tones = [0x1a5a28, 0x2a7a34, 0x3a9a40, 0x62b84a];
+    for (let k = 0; k < 9; k++) { const a = (k / 9) * TAU + r() * 0.4, len = 2.6 * PR + r() * PR, droop = 0.6 + r() * 0.8; px.curve(cx, top, cx + Math.cos(a) * len * 0.7, top + Math.sin(a) * len * 0.35 - 14, cx + Math.cos(a) * len, top + Math.sin(a) * len * 0.5 + droop * 16, tones[2], 10, 2, (x, y, t, w) => { for (let q = -w / 2; q <= w / 2; q += 1) px.dset(x, y + q, tones[1 + (q > 0 ? 0 : 1)], tones[Math.min(3, 2 + (q < -w / 4 ? 1 : 0))], 0.5 + t * 0.3); }); }
+    blob(px, cx, top + 4, 10, 7, [0x3a7a2a, 0x5a9a3a, 0x7aba4a, 0x9ad060], r);
+    for (let k = 0; k < 8; k++) px.rect(cx - 6 + r() * 12, top + 6 + r() * 6, 3, 3, 0xa0702a);   // the coconuts
+    px.outline(0x0c200e); return px;
+  }
+  if (kind === 'tall') {   // 黑板樹: tiers of leaves on a straight trunk
+    const H = 14 * PR, W = 8 * PR, px = new Pix(W, H), cx = W / 2, tones = [0x1a4a26, 0x2a6a30, 0x3e8e3a, 0x6ab84c];
+    px.rect(cx - 5, H * 0.45, 10, H * 0.55, 0x5a4a30); px.rect(cx - 5, H * 0.45, 3, H * 0.55, 0x7a6a48);
+    for (let k = 0; k < 6; k++) { const y = 10 + k * 26 + r() * 6, rx = 28 + k * 9 + r() * 10, ry = 16 + r() * 6; blob(px, cx + (r() - 0.5) * 10, y, Math.min(rx, W / 2 - 2), ry, tones, r); }
+    px.outline(0x0c200e); return px;
+  }
+  const H = 9 * PR, W = 9 * PR, px = new Pix(W, H), cx = W / 2;
+  const tones = kind === 'flame' ? [0x2a5a24, 0x3e7e30, 0x5aa040, 0x82c454] : [0x1e5a2a, 0x2f7e30, 0x52a83c, 0x7acc4c];
+  // the trunk, forking into two or three branches
+  px.rect(cx - 8, H * 0.5, 16, H * 0.5, 0x5a4a30); px.rect(cx - 8, H * 0.5, 5, H * 0.5, 0x7a6a48); px.rect(cx + 4, H * 0.5, 4, H * 0.5, 0x403020);
+  for (let k = 0; k < 3; k++) { const a = -Math.PI / 2 + (k - 1) * 0.7 + (r() - 0.5) * 0.3; px.line(cx, H * 0.55, cx + Math.cos(a) * 40, H * 0.55 + Math.sin(a) * 40, 0x5a4a30, 6); }
+  const n = 12; for (let k = 0; k < n; k++) { const a = r() * TAU, d = r() * 0.55, x = cx + Math.cos(a) * d * W * 0.42, y = H * 0.33 + Math.sin(a) * d * H * 0.26, R = 22 + r() * 22; blob(px, x, y, R, R * 0.8, tones, r); }
+  blob(px, cx, H * 0.28, W * 0.3, H * 0.2, tones, r);
+  if (kind === 'flame') for (let k = 0; k < 90; k++) { const x = 10 + r() * (W - 20), y = 6 + r() * H * 0.5; if (px.on(x, y)) { px.rect(x, y, 3, 2, r() < 0.5 ? 0xe03020 : 0xf05030); } }
+  px.outline(0x0c200e);
   return px;
 }
-function paintLamp() { const px = new Pix(10, 40); px.rect(4, 4, 2, 36, 0x9aa0a8); px.rect(4, 2, 6, 3, 0x9aa0a8); px.rect(8, 4, 2, 2, 0xfff0a0); return px; }
-function paintContainer(seed) { const r = mulberry(seed), px = new Pix(60, 28), c = r.pick([0xd8402a, 0x2a5ad0, 0x18884a, 0xf2a21a, 0x8a3a9a]); px.rect(0, 0, 60, 28, c); for (let x = 0; x < 60; x += 4) px.rect(x, 0, 1, 28, shadeHex(c, 0.75)); px.rect(0, 12, 60, 2, shadeHex(c, 1.2)); px.outline(0x101018); return px; }
-function paintCrane() { const px = new Pix(70, 120); px.rect(10, 20, 6, 100, 0xd82a2a); px.rect(54, 20, 6, 100, 0xd82a2a); px.rect(4, 16, 62, 6, 0xd82a2a); px.rect(0, 10, 70, 5, 0xd82a2a); px.rect(30, 22, 10, 30, 0x404048); px.outline(0x200808); return px; }
-function paintBoat(seed) { const r = mulberry(seed), px = new Pix(40, 22); px.poly([0, 12, 40, 12, 36, 22, 4, 22], 0xf2f2ee); px.rect(10, 4, 16, 8, 0x3a6a9a); px.rect(18, 0, 2, 5, 0x404048); px.outline(0x101828); return px; }
-function paintStation() { const px = new Pix(120, 60); px.ellipse(60, 40, 58, 36, 0xd8dce4); px.ellipse(60, 40, 50, 30, 0x5a9ad0); for (let k = 0; k < 10; k++) px.line(60, 60, 8 + k * 11, 10, 0xffffff, 1); px.rect(0, 50, 120, 10, 0x8a9098); px.outline(0x182028); return px; }
+function paintScooter(seed) {
+  const r = mulberry(seed), W = 40, H = 24, px = new Pix(W, H), c = r.pick([0xd02820, 0x2050c0, 0xf0f0f0, 0x202020, 0x40a060, 0xf0c020, 0x8a8a90, 0xe08040]);
+  // the body shell, the seat, the handlebar, the mirror, two wheels
+  px.poly([8, 10, 30, 10, 34, 14, 34, 17, 6, 17, 4, 13], c); px.poly([12, 6, 28, 6, 30, 10, 10, 10], shadeHex(c, 1.15));
+  px.rect(10, 4, 18, 3, 0x202020); px.rect(26, 1, 2, 9, 0x303038); px.rect(27, 0, 4, 2, 0x303038); px.rect(32, 2, 3, 2, 0x8a8a9a);
+  px.rect(6, 15, 28, 1, shadeHex(c, 0.6)); px.rect(2, 11, 4, 3, 0xd0d0d0);
+  px.ellipse(9, 18, 6, 6, 0x202020); px.ellipse(31, 18, 6, 6, 0x202020); px.ellipse(9, 18, 3, 3, 0x9a9a9a); px.ellipse(31, 18, 3, 3, 0x9a9a9a); px.ellipse(9, 18, 1, 1, 0x404040); px.ellipse(31, 18, 1, 1, 0x404040);
+  px.rect(35, 11, 3, 2, 0xf0e0a0);   // the headlamp
+  px.outline(0x101014); return px;
+}
+function paintLamp(col) { const px = new Pix(16, 16); px.ellipse(8, 8, 7, 7, shadeHex(col, 0.7)); px.ellipse(8, 8, 5.5, 5.5, col); if (col !== 0x303034) px.ellipse(6.5, 6.5, 2, 2, shadeHex(col, 1.6)); return px; }
+function paintBoat(seed) { const r = mulberry(seed), W = 100, H = 54, px = new Pix(W, H); const hull = r.pick([0xf2f2ee, 0x3060a0, 0xd04030]); px.poly([0, 30, W, 30, W - 10, 54, 10, 54], hull); px.rect(0, 30, W, 3, shadeHex(hull, 0.7)); px.rect(0, 40, W, 2, 0xd02820); px.rect(28, 12, 40, 18, 0x3a6a9a); px.rect(30, 14, 36, 8, 0x9ac0d8); for (let x = 32; x < 64; x += 8) px.rect(x, 14, 1, 8, 0x3a6a9a); px.rect(46, 0, 3, 12, 0x404048); px.rect(49, 1, 8, 5, 0xd02820); px.outline(0x101828); return px; }
+function paintPerson(seed, step, down) {
+  const r = mulberry(seed), W = 16, H = 28, px = new Pix(down ? 28 : W, down ? 16 : H), skin = r.pick([0xf0c8a0, 0xe0b088, 0xc89868]), top = r.pick([0xd02820, 0x2050c0, 0xf0f0f0, 0x202020, 0xf0c020, 0x40a060, 0xf080a0, 0x8080c0]), pants = r.pick([0x202030, 0x3a4a6a, 0x6a6a70, 0xe0e0e0, 0x8a6a4a]), hair = r.pick([0x202020, 0x4a3020, 0x101010, 0x8a6a3a]), bag = r() < 0.4 ? r.pick([0xd02820, 0x202020, 0xf0c020]) : null, cap = r() < 0.3 ? r.pick([0xd02820, 0xf0f0f0]) : null, sleeves = r() < 0.5;
+  if (down) {   // flat on the ground, seen from the side
+    px.rect(2, 6, 7, 6, top); px.rect(9, 7, 7, 4, pants); px.rect(16, 8, 4, 3, 0x202020); px.ellipse(3, 8, 3, 3, skin); px.rect(0, 5, 4, 2, hair); px.rect(5, 12, 6, 2, skin);
+    px.outline(0x101014); return px;
+  }
+  px.ellipse(8, 5, 4, 5, skin); px.rect(4, 1, 8, 3, hair); if (cap) px.rect(4, 0, 8, 2, cap);
+  px.rect(4, 10, 8, 9, top); px.rect(2, 11, 2, 7, skin); px.rect(12, 11, 2, 7, skin); if (sleeves) { px.rect(2, 11, 2, 3, top); px.rect(12, 11, 2, 3, top); }
+  if (step) { px.rect(3, 19, 3, 8, pants); px.rect(10, 19, 3, 8, pants); px.rect(3, 27, 3, 1, 0x202020); px.rect(10, 27, 3, 1, 0x202020); px.rect(2, 12, 2, 6, skin); px.rect(12, 12, 2, 6, skin); }
+  else { px.rect(4, 19, 3, 8, pants); px.rect(9, 19, 3, 8, pants); px.rect(4, 27, 3, 1, 0x202020); px.rect(9, 27, 3, 1, 0x202020); }
+  if (bag) px.rect(12, 15, 3, 5, bag);
+  px.outline(0x101014); return px;
+}
+function paintDigit(d, col) { const px = new Pix(14, 22); px.rect(0, 0, 14, 22, 0x141418); px.text(String(d), 7, 1, 19, col, { align: 'center', weight: 900, font: '"Russo One","Noto Sans TC",monospace' }); return px; }
+function paintGlow(col) { const px = new Pix(24, 12); for (let y = 0; y < 12; y++) for (let x = 0; x < 24; x++) { const dx = (x + 0.5 - 12) / 12, dy = (y + 0.5 - 6) / 6, d = dx * dx + dy * dy; if (d < 1) px.dset(x, y, col, shadeHex(col, 1.6), 1 - d); } return px; }
+// the job markers: a sign on a pole for a fare, an order, a trial; a floating diamond for where to go
+function paintMarker(kind) {
+  const px = new Pix(40, 64);
+  if (kind === 'goal' || kind === 'cp') { const c = kind === 'goal' ? 0x30e0ff : 0xffa030; px.poly([20, 2, 38, 26, 20, 50, 2, 26], c); px.poly([20, 10, 31, 26, 20, 42, 9, 26], shadeHex(c, 1.5)); px.poly([20, 18, 25, 26, 20, 34, 15, 26], 0xffffff); px.outline(0x102030); return px; }
+  px.rect(18, 30, 4, 34, 0x8a8a90); px.rect(14, 62, 12, 2, 0x606068);
+  if (kind === 'taxi') { px.rect(2, 2, 36, 30, 0xf2c21a); px.rect(2, 2, 36, 2, 0xffe060); px.rect(6, 12, 28, 12, 0x202020); px.rect(10, 8, 20, 6, 0x202020); px.ellipse(11, 25, 4, 4, 0x202020); px.ellipse(29, 25, 4, 4, 0x202020); px.text('TAXI', 20, 3, 8, 0x202020, { align: 'center' }); }
+  else if (kind === 'box') { px.rect(2, 2, 36, 30, 0xd02820); px.rect(8, 10, 24, 18, 0xc89060); px.rect(8, 10, 24, 4, 0xe0a870); px.rect(18, 10, 4, 18, 0xa07040); px.text('外送', 20, 1, 9, 0xffffff, { align: 'center' }); }
+  else { px.rect(2, 2, 36, 30, 0xffffff); for (let y = 2; y < 32; y += 6) for (let x = 2; x < 38; x += 6) if (((x + y) / 6) % 2 < 1) px.rect(x, y, 6, 6, 0x202020); px.rect(2, 24, 36, 8, 0x2050c0); px.text('TIME', 20, 23, 8, 0xffffff, { align: 'center' }); }
+  px.outline(0x101014); return px;
+}
 function paintProps() {
-  for (let i = 0; i < 6; i++) propKind('townhouse' + i, paintTownhouse(100 + i * 7, 3 + (i % 3)), 10 + (i % 3) * 3.2, { fx: 8, fz: 10 });
-  for (let i = 0; i < 4; i++) propKind('block' + i, paintBlock(200 + i * 7, 6 + i * 2), 20 + i * 6, { fx: 18, fz: 14 });
-  propKind('tower85', paintTower(1), 160, { fx: 26, fz: 26 }); propKind('temple', paintTemple(3), 14, { fx: 20, fz: 14 });
-  for (let i = 0; i < 3; i++) propKind('banyan' + i, paintTree(300 + i * 7, 'banyan'), 9 + i, { r: 0.9 });
-  for (let i = 0; i < 2; i++) propKind('palm' + i, paintTree(400 + i * 7, 'palm'), 11 + i * 2, { r: 0.5 });
-  propKind('lamp', paintLamp(), 8, { r: 0.25 }); for (let i = 0; i < 4; i++) propKind('box' + i, paintContainer(500 + i * 7), 5.2, { fx: 12, fz: 5 });
-  propKind('crane', paintCrane(), 40, { fx: 10, fz: 10 }); propKind('boat', paintBoat(1), 4, { solid: false }); propKind('station', paintStation(), 14, { fx: 30, fz: 14 });
+  propKind('mk_taxi', paintMarker('taxi'), 3.2); propKind('mk_box', paintMarker('box'), 3.2); propKind('mk_flag', paintMarker('flag'), 3.2); propKind('mk_goal', paintMarker('goal'), 2.4); propKind('mk_cp', paintMarker('cp'), 2.0);
+  for (let d = 0; d < 10; d++) { propKind('dr' + d, paintDigit(d, 0xff3a3a), 0.44); propKind('dg' + d, paintDigit(d, 0x40f070), 0.44); }
+  propKind('glow_red', paintGlow(0xff2020), 0.3); propKind('glow_head', paintGlow(0xfff0c0), 0.3);
+  for (let i = 0; i < 3; i++) propKind('tree' + i, paintTree(300 + i * 7, i === 2 ? 'flame' : 'banyan'), 9 + i, { r: 0.8, solid: true });
+  for (let i = 0; i < 2; i++) propKind('palm' + i, paintTree(400 + i * 7, 'palm'), 10 + i * 2, { r: 0.5, solid: true });
+  propKind('tall', paintTree(410, 'tall'), 14, { r: 0.6, solid: true });
+  for (let i = 0; i < 4; i++) propKind('scooter' + i, paintScooter(500 + i * 3), 1.15);
+  propKind('lamp_off', paintLamp(0x303034), 0.34); propKind('lamp_red', paintLamp(0xff3030), 0.34); propKind('lamp_yellow', paintLamp(0xffc020), 0.34); propKind('lamp_green', paintLamp(0x30e060), 0.34);
+  for (let i = 0; i < 3; i++) propKind('boat' + i, paintBoat(1 + i), 5); for (let i = 0; i < 8; i++) { propKind('person' + i, paintPerson(600 + i * 5, false), 1.7); propKind('person' + i + 'w', paintPerson(600 + i * 5, true), 1.7); propKind('person' + i + 'd', paintPerson(600 + i * 5, false, true), 0.95); }
 }
 // ---------- placing ----------
 function addProp(name, x, z, o) {
-  const K = PROPS.kinds[name]; if (!K) return;
-  const p = Object.assign({ k: name, x, z, y: terrainH(x, z), flip: false, s: 1 }, o || {});
-  if (p.solid == null ? K.solid : p.solid) { if (K.r) p.r = K.r * p.s; else { p.x0 = x - K.fx / 2 * p.s; p.x1 = x + K.fx / 2 * p.s; p.z0 = z - K.fz / 2 * p.s; p.z1 = z + K.fz / 2 * p.s; } }
+  const K = PROPS.kinds[name]; if (!K) return null;
+  const p = Object.assign({ k: name, x, z, y: terrainH(x, z), flip: false, s: 1, i: PROPS.list.length }, o || {});
+  if ((p.solid == null ? K.solid : p.solid) && K.r) addSolid({ x, z, r: K.r * p.s, h: K.hM * p.s * 0.18 });
   PROPS.list.push(p);
-  const c = PROPS.cell, i0 = Math.floor((x - 20) / c), i1 = Math.floor((x + 20) / c), j0 = Math.floor((z - 20) / c), j1 = Math.floor((z + 20) / c);
-  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const key = i + ',' + j; let a = PROPS.grid.get(key); if (!a) PROPS.grid.set(key, (a = [])); a.push(p); }
   return p;
-}
-const _pn = [];
-function propsNear(x, z, R) { _pn.length = 0; const c = PROPS.cell; for (let i = Math.floor((x - R) / c); i <= Math.floor((x + R) / c); i++) for (let j = Math.floor((z - R) / c); j <= Math.floor((z + R) / c); j++) { const a = PROPS.grid.get(i + ',' + j); if (a) for (const p of a) if (p.r != null || p.x0 != null) if (!_pn.includes(p)) _pn.push(p); } return _pn; }
-// is this spot clear of road (with a margin), and on land?
-function clearForBuilding(x, z, margin) { const n = nearestRoad(x, z); if (n && n.d < n.rd.w / 2 + margin) return false; const k = groundKind(x, z); return k !== GK.water; }
-function placeProps() {
-  const r = mulberry(11);
-  // the city blocks: houses along every street, taller blocks along the boulevards, the odd temple
-  for (const rd of MAP.roads) {
-    const K = RK[rd.kind]; if (rd.kind === 'highway' || rd.kind === 'hill' || rd.kind === 'quay' || rd.ramp) continue;
-    for (let i = 0; i + 1 < rd.pts.length; i++) {
-      const [ax, az] = rd.pts[i], [bx, bz] = rd.pts[i + 1], dx = bx - ax, dz = bz - az, L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L, nx = -uz, nz = ux;
-      for (let s = 14; s < L - 14; s += (rd.kind === 'boulevard' ? 22 : 12)) {
-        for (const side of [-1, 1]) {
-          const off = rd.w / 2 + (rd.kind === 'boulevard' ? 12 : 6), x = ax + ux * s + nx * off * side, z = az + uz * s + nz * off * side;
-          if (!clearForBuilding(x, z, 3) || x < 540 || x > 2340 || z < 180 || z > 2180) continue;
-          if (rd.kind === 'boulevard') { if (r() < 0.04) addProp('temple', x, z); else if (r() < 0.45) addProp('block' + r.int(0, 3), x, z); else addProp('townhouse' + r.int(0, 5), x, z); }
-          else if (r() < 0.9) addProp('townhouse' + r.int(0, 5), x, z);
-        }
-        if (rd.kind === 'boulevard' && (s / 22) % 2 === 0) for (const side of [-1, 1]) { const x = ax + ux * s + nx * (rd.w / 2 + 1.2) * side, z = az + uz * s + nz * (rd.w / 2 + 1.2) * side; addProp('lamp', x, z); if (r() < 0.5) addProp('palm' + r.int(0, 1), x + nx * 2 * side, z + nz * 2 * side); }
-      }
-    }
-  }
-  // the landmarks
-  addProp('tower85', 640, 2060); addProp('station', 1150, 1332, { solid: false });
-  // 柴山's trees, the park's trees, the sand bar's palms
-  for (let i = 0; i < 700; i++) { const x = 60 + r() * 900, z = 20 + r() * 900; if (terrainH(x, z) > 6 && clearForBuilding(x, z, 5)) addProp('banyan' + r.int(0, 2), x, z, { s: 0.8 + r() * 0.6 }); }
-  for (let i = 0; i < 90; i++) { const x = 1260 + r() * 380, z = 160 + r() * 350; if (clearForBuilding(x, z, 4)) addProp('banyan' + r.int(0, 2), x, z); }
-  for (let i = 0; i < 80; i++) { const x = 70 + r() * 270, z = 1520 + r() * 860; if (groundKind(x, z) === GK.sand && clearForBuilding(x, z, 4)) addProp('palm' + r.int(0, 1), x, z); }
-  // the harbour: containers in rows and cranes along the quay
-  for (let z = 760; z < 1700; z += 60) for (let k = 0; k < 4; k++) addProp('box' + r.int(0, 3), 590 + k * 14, z + r() * 20);
-  for (let z = 800; z < 1700; z += 220) addProp('crane', 545, z);
-  for (let i = 0; i < 20; i++) addProp('boat', 200 + r() * 250, 300 + r() * 1100, { solid: false });
 }

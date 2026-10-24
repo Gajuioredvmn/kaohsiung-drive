@@ -17,13 +17,13 @@ function uiInit() {
     <div class="sel">
       <div class="show"><canvas id="turn" width="460" height="200"></canvas><div class="badge"><span id="b-gear"></span><span id="b-eng"></span><span id="b-drv"></span></div>
         <button class="arrow l" data-act="prev">◀</button><button class="arrow r" data-act="next">▶</button></div>
-      <div class="info panel"><div class="nm"><b id="c-name"></b><span id="c-en"></span></div><p class="desc" id="c-desc"></p><div class="stats" id="c-stats"></div></div>
+      <div class="info panel"><div class="nm"><b id="c-name"></b><span id="c-en"></span></div><p class="desc" id="c-desc"></p><div class="stats" id="c-stats"></div><div class="note" id="c-money"></div></div>
       <div class="thumbs" id="thumbs"></div>
       <div class="actions"><button class="btn ghost" data-go="title">返回</button><button class="btn big" data-act="go">出發！</button></div>
     </div>
   </section>
   <section class="scr dim" id="s-settings" hidden><div class="panel card" id="settings"></div></section>
-  <section class="scr dim" id="s-pause" hidden><div class="panel vmenu"><h2 class="ttl" style="text-align:center">暫停</h2><button class="btn big" data-act="resume">繼續</button><button class="btn" data-act="road">回到路上</button><button class="btn" data-go="settings">設定</button><button class="btn ghost" data-act="title">回標題</button></div></section>`;
+  <section class="scr dim" id="s-pause" hidden><div class="panel vmenu"><h2 class="ttl" style="text-align:center">暫停</h2><button class="btn big" data-act="resume">繼續</button><button class="btn" data-act="road">回到路上</button><button class="btn" data-act="quit">放棄任務</button><button class="btn" data-act="recenter">方向盤歸零</button><button class="btn" data-go="settings">設定</button><button class="btn ghost" data-act="title">回標題</button></div></section>`;
   document.body.appendChild(h('<div id="rot" class="need"><div style="font-size:44px">⟲</div>請把手機轉成橫向</div>'));
   root.addEventListener('click', onUiClick);
   $('s-title').addEventListener('pointerdown', unlock);
@@ -41,14 +41,17 @@ function onUiClick(e) {
   const b = e.target.closest('button'); if (!b) return;
   if (!UI.unlocked) unlock();
   sfxUi();
-  if (b.dataset.go) { if (b.dataset.go === 'title' && G.mode === 'drive') { G.mode = 'title'; engineStop(); } show(b.dataset.go); return; }
+  if (b.dataset.go) { if (b.dataset.go === 'title' && G.mode === 'drive') { G.mode = 'title'; engineStop(); driveEnd(); } show(b.dataset.go); return; }
   switch (b.dataset.act) {
     case 'prev': UI.sel = (UI.sel + CARS.length - 1) % CARS.length; openSelect(); break;
     case 'next': UI.sel = (UI.sel + 1) % CARS.length; openSelect(); break;
     case 'go': startDrive(UI.sel); break;
+    case 'buy': { const price = carPrice(UI.sel); if (PRO.money >= price) { PRO.money -= price; PRO.owned.push(CARS[UI.sel].id); saveProgress(); sfxChime(); openSelect(); } break; }
+    case 'quit': cancelJob(); onPausePressed(); break;
     case 'resume': onPausePressed(); break;
     case 'road': carToRoad(); onPausePressed(); break;
-    case 'title': G.mode = 'title'; G.paused = false; engineStop(); show('title'); break;
+    case 'recenter': tiltRecenter(); onPausePressed(); break;
+    case 'title': G.mode = 'title'; G.paused = false; engineStop(); driveEnd(); show('title'); break;
   }
 }
 // ---------- the showroom ----------
@@ -58,7 +61,11 @@ function openSelect() {
   $('b-gear').textContent = c.gears + ' 速'; $('b-eng').textContent = ENGINE_NAME[c.engine] || c.engine; $('b-drv').textContent = DRIVE_NAME[P.drive];
   const st = $('c-stats'); st.innerHTML = '';
   for (const [l, f, v] of STAT_ROWS) { st.appendChild(h(`<span class="l">${l}</span>`)); const b = h('<div class="bar"><i></i></div>'); b.firstChild.style.width = Math.round(clamp(f(c), 0.05, 1) * 100) + '%'; st.appendChild(b); st.appendChild(h(`<span class="v">${v ? v(c) : ''}</span>`)); }
-  const th = $('thumbs'); th.innerHTML = ''; CARS.forEach((q, i) => { const d = h(`<button class="th${i === UI.sel ? ' on' : ''}" style="--c:${cssHex(q.color)}"></button>`); d.onclick = () => { UI.sel = i; openSelect(); }; th.appendChild(d); });
+  const th = $('thumbs'); th.innerHTML = ''; CARS.forEach((q, i) => { const d = h(`<button class="th${i === UI.sel ? ' on' : ''}${q.starter || PRO.owned.includes(q.id) ? '' : ' lock'}" style="--c:${cssHex(q.color)}" title="${q.name}"></button>`); d.onclick = () => { UI.sel = i; openSelect(); }; th.appendChild(d); });
+  const owned = c.starter || PRO.owned.includes(c.id), price = carPrice(UI.sel), go = document.querySelector('#s-select button[data-act=go]');
+  $('c-desc').textContent = owned ? c.desc : '（$' + price.toLocaleString() + '）' + c.desc;
+  if (owned) { go.disabled = false; go.textContent = '出發！'; go.dataset.act = 'go'; } else if (PRO.money >= price) { go.disabled = false; go.textContent = '購買 $' + price.toLocaleString(); go.dataset.act = 'buy'; } else { go.disabled = true; go.textContent = '還差 $' + (price - PRO.money).toLocaleString(); go.dataset.act = 'go'; }
+  $('c-money').textContent = '$ ' + PRO.money.toLocaleString() + '　完成 ' + PRO.jobs + ' 件任務';
   if (!UI.turnRaf) turnLoop();
 }
 function turnLoop() {
@@ -81,10 +88,14 @@ function openSettings() {
     <div class="row"><span class="lbl">方向盤</span><div class="seg" id="seg-ctrl"><button class="btn" data-v="tilt">陀螺儀</button><button class="btn" data-v="touch">觸控滑桿</button></div></div>
     <div class="row"><span class="lbl">變速箱</span><div class="seg" id="seg-auto"><button class="btn" data-v="1">AT 自排</button><button class="btn" data-v="0">MT 手排</button></div></div>
     <div class="row"><span class="lbl">畫質</span><div class="seg" id="seg-q"><button class="btn" data-v="high">高（景深、泛光）</button><button class="btn" data-v="low">省電</button><button class="btn" data-v="off">不要後製</button></div></div>
+    <div class="row"><span class="lbl">任務招牌</span><div class="seg" id="seg-jobs"><button class="btn" data-v="1">顯示</button><button class="btn" data-v="0">關閉（純閒晃）</button></div></div>
+    <div class="row"><span class="lbl">警察</span><div class="seg" id="seg-police"><button class="btn" data-v="1">會來抓</button><button class="btn" data-v="0">不管你</button></div></div>
     <div class="row"><span class="lbl">轉向靈敏</span><div><input class="rng" type="range" min="10" max="40" step="1" value="${SET.sens}" id="rng-sens"><div class="note">傾斜 <span id="v-sens">${SET.sens}</span>° 打滿</div></div></div>
     <div class="actions"><button class="btn" data-act="back">完成</button></div>`;
-  const mark = () => { for (const [id, key] of [['seg-ctrl', 'ctrl'], ['seg-auto', 'auto'], ['seg-q', 'quality']]) for (const b of document.querySelectorAll('#' + id + ' .btn')) b.setAttribute('aria-pressed', String(b.dataset.v) === String(key === 'auto' ? (SET.auto ? 1 : 0) : SET[key]) ? 'true' : 'false'); };
+  const mark = () => { for (const [id, key] of [['seg-ctrl', 'ctrl'], ['seg-auto', 'auto'], ['seg-q', 'quality'], ['seg-jobs', 'jobs'], ['seg-police', 'police']]) for (const b of document.querySelectorAll('#' + id + ' .btn')) b.setAttribute('aria-pressed', String(b.dataset.v) === String(key === 'auto' || key === 'jobs' || key === 'police' ? (SET[key] ? 1 : 0) : SET[key]) ? 'true' : 'false'); };
   mark();
-  $('settings').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'back') { show(G.mode === 'drive' ? 'pause' : 'title'); return; } const seg = b.parentElement.id; if (seg === 'seg-ctrl') SET.ctrl = b.dataset.v; if (seg === 'seg-auto') { SET.auto = b.dataset.v === '1'; CAR.auto = SET.auto; } if (seg === 'seg-q') { SET.quality = b.dataset.v; r3Resize(); } saveSettings(); mark(); CTL.mode = SET.ctrl === 'tilt' && CTL.tilt.ok ? 'tilt' : 'touch'; layoutPads(); };
+  $('settings').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'back') { show(G.mode === 'drive' ? 'pause' : 'title'); return; } const seg = b.parentElement.id; if (seg === 'seg-ctrl') SET.ctrl = b.dataset.v; if (seg === 'seg-auto') { SET.auto = b.dataset.v === '1'; CAR.auto = SET.auto; } if (seg === 'seg-q') { SET.quality = b.dataset.v; r3Resize(); } if (seg === 'seg-jobs') SET.jobs = b.dataset.v === '1'; if (seg === 'seg-police') SET.police = b.dataset.v === '1'; saveSettings(); mark(); CTL.mode = SET.ctrl === 'tilt' && CTL.tilt.ok ? 'tilt' : 'touch'; layoutPads(); };
   $('rng-sens').oninput = (e) => { SET.sens = +e.target.value; CTL.sens = SET.sens; $('v-sens').textContent = SET.sens; saveSettings(); };
 }
+// the Android app's back button
+window.__khBack = () => { if (G.mode === 'drive') { if (G.paused) show(null); onPausePressed(); return 'stay'; } if (!UI.scr || UI.scr === 'title') return 'exit'; show('title'); return 'stay'; };

@@ -52,42 +52,53 @@ function carShift(g) { if (g < 1 || g > CAR.P.ratios.length || g === CAR.gear) r
 function carStep(dt) {
   const C = CAR, P = C.P; if (!P) return;
   // the ground under each end, and what it is made of
-  C.surface = groundKind(C.x, C.z); C.mu = GK_MU[C.surface]; const gdrag = GK_DRAG[C.surface];
+  C.surface = GH.tunnel ? GK.asphalt : groundKind(C.x, C.z); C.mu = GK_MU[C.surface]; const gdrag = GK_DRAG[C.surface];
   // ---- steering: the wheel moves at a finite rate, and less lock is available at speed ----
-  const vfwd = Math.max(0, C.vx), lockK = 1 / (1 + vfwd * vfwd / 900);
-  const target = C.steerIn * P.steerMax * (0.35 + 0.65 * lockK);
+  // the input is right-positive; the body frame's steer is left-positive. Small tilts give fine steering (the input
+  // is raised to a power), and the lock on offer shrinks with speed so a full tilt at 80 km/h is a lane change, not a spin
+  const vfwd = Math.max(0, C.vx), lockK = Math.max(0.1, 1 / (1 + vfwd / 9));
+  const inp = Math.sign(C.steerIn) * Math.pow(Math.abs(C.steerIn), 1.5);
+  const target = -inp * P.steerMax * lockK;
   C.steer += clamp(target - C.steer, -P.steerRate * dt, P.steerRate * dt);
+  // ---- reverse: standing still, the brake pedal held with no throttle puts it in R; the throttle takes it back to 1 ----
+  if (Math.abs(C.vx) < 0.4) { if (C.brake > 0.3 && C.throttle < 0.05) { C.revT = (C.revT || 0) + dt; if (C.revT > 0.35) C.rev = true; } else C.revT = 0; if (C.throttle > 0.3 && C.brake < 0.05) C.rev = false; }
+  let th = C.throttle, br = C.brake;
+  if (C.rev) { th = C.brake; br = C.throttle; }   // in reverse the pedals swap roles: the brake pedal is the reverse throttle
   // ---- gearbox ----
   if (C.shiftT > 0) C.shiftT -= dt;
-  const ratio = P.ratios[C.gear - 1] * P.final;
-  const wheelRpm = (C.vx / P.rw) * 60 / TAU, rpmFromWheels = wheelRpm * ratio;
+  const ratio = (C.rev ? -P.ratios[0] * 1.1 : P.ratios[C.gear - 1]) * P.final;
+  const wheelRpm = (Math.abs(C.vx) / P.rw) * 60 / TAU, rpmFromWheels = wheelRpm * Math.abs(ratio);
   // the clutch is out except during a shift; pulling away the engine sits near the idle until the wheels catch up
   const clutchIn = C.shiftT > 0;
-  if (clutchIn) C.rpm = lerp(C.rpm, P.idle + C.throttle * (P.red * 0.8 - P.idle), clamp(dt * 7, 0, 1));
-  else C.rpm = lerp(C.rpm, Math.max(P.idle + C.throttle * 900 * clamp(1 - C.vx / 4, 0, 1), rpmFromWheels), clamp(dt * 30, 0, 1));
+  if (clutchIn) C.rpm = lerp(C.rpm, P.idle + th * (P.red * 0.8 - P.idle), clamp(dt * 7, 0, 1));
+  else C.rpm = lerp(C.rpm, Math.max(P.idle + th * 900 * clamp(1 - Math.abs(C.vx) / 4, 0, 1), rpmFromWheels), clamp(dt * 30, 0, 1));
   C.rpm = clamp(C.rpm, P.idle * 0.6, P.red * 1.03);
-  if (C.auto && C.shiftT <= 0 && C.vx > 2) { if (C.rpm > P.red * 0.96 && C.gear < P.ratios.length) carShift(C.gear + 1); else if (C.rpm < P.red * 0.42 && C.gear > 1 && C.throttle < 0.95) carShift(C.gear - 1); else if (C.rpm < P.red * 0.3 && C.gear > 1) carShift(C.gear - 1); }
-  const Teng = clutchIn ? 0 : engineTorque(P, C.rpm, C.throttle);
+  if (C.auto && !C.rev && C.shiftT <= 0 && C.vx > 2) { if (C.rpm > P.red * 0.96 && C.gear < P.ratios.length) carShift(C.gear + 1); else if (C.rpm < P.red * 0.42 && C.gear > 1 && th < 0.95) carShift(C.gear - 1); else if (C.rpm < P.red * 0.3 && C.gear > 1) carShift(C.gear - 1); }
+  if (C.rev && C.gear !== 1) C.gear = 1;
+  const Teng = clutchIn ? 0 : engineTorque(P, C.rpm, th);
   const Fdrive = (Teng * ratio) / P.rw;
   // ---- loads: static split, then the transfer from acceleration (last step's) ----
   const g = 9.81, Wt = P.m * g, FzF0 = Wt * P.b / P.L, FzR0 = Wt * P.a / P.L;
   const dLon = (P.m * C.aLon * P.h) / P.L, FzF = Math.max(0.05 * Wt, FzF0 - dLon), FzR = Math.max(0.05 * Wt, FzR0 + dLon);
   C.loadF = FzF / Wt;
   // ---- slip angles at each axle ----
-  const vxs = Math.max(Math.abs(C.vx), 1.5) * Math.sign(C.vx || 1);
-  const aF = Math.atan2(C.vy + P.a * C.r, vxs) - C.steer, aR = Math.atan2(C.vy - P.b * C.r, vxs);
+  const vxs = Math.max(Math.abs(C.vx), 0.3) * Math.sign(C.vx || 1);
+  // at a crawl the slip angles mean little (the kinematic blend below steers the car), so they fade out, which also keeps the friction circle free for pulling away
+  const lowK = clamp(Math.abs(C.vx) / 1.5, 0.1, 1);
+  const aF = (Math.atan2(C.vy + P.a * C.r, vxs) - C.steer) * lowK, aR = Math.atan2(C.vy - P.b * C.r, vxs) * lowK;
   // ---- longitudinal demand per axle: drive on the driven axle, brakes on both (60/40), handbrake locks the rear ----
-  const Fb = P.brakeF * C.brake;
+  const Fb = P.brakeF * br * (C.vx < 0 ? -1 : 1);
   let FxF = -Fb * 0.62, FxR = -Fb * 0.38;
   if (P.drive === 'rwd') FxR += Fdrive; else if (P.drive === 'fwd') FxF += Fdrive; else { FxF += Fdrive * 0.4; FxR += Fdrive * 0.6; }
-  if (C.vx < 0.3 && FxF + FxR < 0 && C.throttle < 0.05) { FxF = FxR = 0; }   // brakes hold a standing car, they do not pull it backwards
+  if (Math.abs(C.vx) < 0.3 && th < 0.05 && br > 0) { FxF = FxR = 0; }   // brakes hold a standing car, they do not pull it the other way
   // the demand becomes a slip ratio the tyre curve answers: a saturated tyre spins or locks, and gives less
   const muF = P.mu * C.mu, muR = P.mu * C.mu;
   const kF = clamp(FxF / Math.max(1, muF * FzF * P.cs * 2.2), -1.2, 1.2), kR = C.hand > 0.5 ? -1.5 : clamp(FxR / Math.max(1, muR * FzR * P.cs * 2.2), -1.2, 1.2);
   const tf = tyreForce(FzF, kF, aF, muF, P.cs), FxFt = tf[0], FyFt = tf[1];
   const tr = tyreForce(FzR, kR, aR, C.hand > 0.5 ? muR * 0.72 : muR, P.cs), FxRt = tr[0], FyRt = tr[1];
   // wheelspin and lock-up for the sound and the smoke
-  C.slipF = clamp(Math.abs(aF) / 0.2 + Math.abs(kF), 0, 2); C.slipR = clamp(Math.abs(aR) / 0.2 + Math.abs(kR), 0, 2); C.slipK = Math.max(C.slipF, C.slipR);
+  const spd = clamp((Math.abs(C.vx) - 3) / 4, 0, 1);   // a crawling car is not sliding, whatever the angles say
+  C.slipF = clamp(Math.abs(aF) / 0.2 + Math.abs(kF), 0, 2) * spd; C.slipR = clamp(Math.abs(aR) / 0.2 + Math.abs(kR), 0, 2) * spd; C.slipK = Math.max(C.slipF, C.slipR);
   // ---- sum in the body frame; the front tyre's force turns with the wheel ----
   const cs = Math.cos(C.steer), sn = Math.sin(C.steer);
   const Fx = FxFt * cs - FyFt * sn + FxRt, Fy = FxFt * sn + FyFt * cs + FyRt;
@@ -97,41 +108,64 @@ function carStep(dt) {
   const ax = (Fx + Fdrag) / P.m + C.vy * C.r, ay = Fy / P.m - C.vx * C.r;
   C.aLon = (Fx + Fdrag) / P.m; C.aLat = Fy / P.m;
   C.vx += ax * dt; C.vy += ay * dt; C.r += (Mz / P.Iz) * dt;
+  // the drift assist: once the tail is well out, the yaw is damped so a slide can be held and gathered up, not spun
+  if (C.assist !== false) { const beta = Math.abs(Math.atan2(C.vy, Math.max(2, Math.abs(C.vx)))); if (beta > 0.25) { const k = clamp((beta - 0.25) / 0.5, 0, 1); C.r -= C.r * k * 2.2 * dt; if (Math.sign(C.steer) === -Math.sign(C.r) && Math.abs(C.steer) > 0.05) C.vy -= C.vy * k * 1.5 * dt; } }
   // at a crawl the slip model loses meaning: blend toward the kinematic bicycle (the rear axle rolls without slip)
   const slow = clamp(1 - Math.abs(C.vx) / 4, 0, 1);
   if (slow > 0) { const rk = (C.vx * Math.tan(C.steer)) / P.L, vyk = rk * P.b; C.r = lerp(C.r, rk, slow); C.vy = lerp(C.vy, vyk, slow); }
-  if (Math.abs(C.vx) < 0.15 && C.throttle < 0.05) { C.vx = 0; C.vy = 0; C.r = 0; }
+  if (Math.abs(C.vx) < 0.15 && th < 0.05) { C.vx = 0; C.vy = 0; C.r = 0; }
   // ---- integrate the pose ----
   C.yaw += C.r * dt;
   const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw);
   C.x += (C.vx * sy + C.vy * cy) * dt; C.z += (C.vx * cy - C.vy * sy) * dt;
-  C.y = terrainH(C.x, C.z);
+  // the ground under the car, which may be a viaduct; off an edge it falls
+  const gh = groundH(C.x, C.z, C.y);
+  if (C.y > gh + 0.08) { C.vyv = (C.vyv || 0) - 9.81 * dt; C.y += C.vyv * dt; if (C.y <= gh) { C.y = gh; if (C.vyv < -3) { C.vx *= 0.85; if (typeof onCarHit === 'function') onCarHit(-C.vyv * 0.6); } C.vyv = 0; } }
+  else { if (gh - C.y > 0.5 && Math.abs(C.vx) > 1) { /* a step up: a kerb or a ramp foot */ } C.y = gh; C.vyv = 0; }
+  // bumping up onto the pavement costs speed and shakes the car
+  if (C.surface === GK.walk && C.lastSurface === GK.asphalt && Math.abs(C.vx) > 2) { C.vx *= 0.88; C.vy *= 0.7; if (typeof onKerb === 'function') onKerb(); }
+  C.lastSurface = C.surface;
   C.kmh = Math.abs(C.vx) * 3.6;
+  if (C.rev && C.vx > 1) C.rev = false;
   // a smear of the tyre marks the renderer lays down
   if (C.slipK > 1.05 && Math.abs(C.vx) > 3) { C.trail.push([C.x, C.z, C.yaw, 1]); if (C.trail.length > 400) C.trail.shift(); }
   // the world's edges and the water: a hard stop at the map's rim, a drowning drag in the water
   if (C.x < 4) { C.x = 4; C.vx *= 0.3; } if (C.z < 4) { C.z = 4; C.vx *= 0.3; } if (C.x > MAP.W - 4) { C.x = MAP.W - 4; C.vx *= 0.3; } if (C.z > MAP.W - 4) { C.z = MAP.W - 4; C.vx *= 0.3; }
   propsCollide(dt);
 }
-// hitting the solid things of the map: pushed out along the shortest way, the speed into it lost, a jolt
+// hitting the solid things of the city: the car is two discs, one over each axle; each is pushed out of any box
+// (oriented) or post (round) it overlaps, along the shortest way, and the speed into it is lost with a jolt
 function propsCollide(dt) {
-  const C = CAR; const near = propsNear(C.x, C.z, 12); if (!near.length) return;
-  const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), hl = C.P.L * 0.8, hw = C.P.W * 0.5;
-  for (const p of near) {
-    // the car as a box in the prop's frame (props are axis-aligned boxes or circles)
-    if (p.r) {
-      const dx = C.x - p.x, dz = C.z - p.z, d = Math.hypot(dx, dz), min = p.r + hw * 0.9;
-      if (d < min) { const nx = dx / (d || 1), nz = dz / (d || 1); C.x = p.x + nx * min; C.z = p.z + nz * min; carBounce(nx, nz); }
-    } else {
-      const cx = clamp(C.x, p.x0, p.x1), cz = clamp(C.z, p.z0, p.z1), dx = C.x - cx, dz = C.z - cz, d = Math.hypot(dx, dz);
-      // the car's own extent toward the box: a corner's reach
-      const reach = hw * 0.95 + (Math.abs(sy) * hl + Math.abs(cy) * hw - hw * 0.95) * 0.5;
-      if (d < reach) {
-        let nx, nz; if (d > 0.01) { nx = dx / d; nz = dz / d; } else { const toL = C.x - p.x0, toR = p.x1 - C.x, toT = C.z - p.z0, toB = p.z1 - C.z, m = Math.min(toL, toR, toT, toB); nx = m === toL ? -1 : m === toR ? 1 : 0; nz = m === toT ? -1 : m === toB ? 1 : 0; }
-        C.x = cx + nx * reach; C.z = cz + nz * reach; carBounce(nx, nz);
+  const C = CAR, near = solidsNear(C.x, C.z, 10); if (!near.length) return;
+  const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), rc = C.P.W * 0.5 * 0.95;
+  for (let k = 0; k < 2; k++) {
+    const off = k === 0 ? C.P.a * 0.95 : -C.P.b * 0.95, px = C.x + sy * off, pz = C.z + cy * off;
+    for (const s of near) {
+      let nx, nz, pen;
+      if (s.r != null) { const dx = px - s.x, dz = pz - s.z, d = Math.hypot(dx, dz), min = s.r + rc; if (d >= min) continue; nx = d > 1e-3 ? dx / d : 1; nz = d > 1e-3 ? dz / d : 0; pen = min - d; }
+      else {
+        const c = Math.cos(s.yaw), sn = Math.sin(s.yaw), dx = px - s.x, dz = pz - s.z, lu = dx * c - dz * sn, lv = dx * sn + dz * c;
+        if (Math.abs(lu) > s.hx + rc || Math.abs(lv) > s.hz + rc) continue;
+        const cu = clamp(lu, -s.hx, s.hx), cv = clamp(lv, -s.hz, s.hz), du = lu - cu, dv = lv - cv, d = Math.hypot(du, dv);
+        if (d >= rc) continue;
+        let lnx, lnz;
+        if (d > 1e-3) { lnx = du / d; lnz = dv / d; pen = rc - d; }
+        else { const toL = lu + s.hx, toR = s.hx - lu, toT = lv + s.hz, toB = s.hz - lv, m = Math.min(toL, toR, toT, toB); lnx = m === toL ? -1 : m === toR ? 1 : 0; lnz = m === toT ? -1 : m === toB ? 1 : 0; pen = m + rc; }
+        nx = lnx * c + lnz * sn; nz = -lnx * sn + lnz * c;
       }
+      C.x += nx * pen; C.z += nz * pen; carBounce(nx, nz);
     }
   }
+}
+// is the point inside a solid lower than y? (for the camera)
+function solidAt(x, y, z, pad) {
+  for (const s of solidsNear(x, z, 4)) {
+    if (s.h != null && y > s.h) continue; if (s.h == null && s.r != null && s.r < 0.6) continue;
+    if (s.r != null) { if (Math.hypot(x - s.x, z - s.z) < s.r + (pad || 0)) return s; continue; }
+    const c = Math.cos(s.yaw), sn = Math.sin(s.yaw), dx = x - s.x, dz = z - s.z, lu = dx * c - dz * sn, lv = dx * sn + dz * c;
+    if (Math.abs(lu) < s.hx + (pad || 0) && Math.abs(lv) < s.hz + (pad || 0)) return s;
+  }
+  return null;
 }
 function carBounce(nx, nz) {
   const C = CAR, sy = Math.sin(C.yaw), cy = Math.cos(C.yaw);

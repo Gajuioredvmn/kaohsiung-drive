@@ -170,3 +170,13 @@ function sfxStarter(dur) {
 }
 function sfxCatch() { if (!AU.ctx) return; const t = AU.ctx.currentTime; noiseHit(t, 'lowpass', 500, 1, 0.3, 0.2); tone(t, 'sawtooth', 50, 110, 0.12, 0.25); }
 function sfxUi() { if (!AU.ctx) return; const t = AU.ctx.currentTime; tone(t, 'square', 990, 0, 0.06, 0.07); }
+// another car's horn, quieter with distance, a little lower than ours
+function sfxHornFar(dist) { if (!AU.ctx) return; const t = AU.ctx.currentTime, k = clamp(1 - dist / 60, 0.1, 1) * 0.5; tone(t, 'sawtooth', 349, 0, 0.09 * k, 0.45); tone(t, 'sawtooth', 440, 0, 0.07 * k, 0.45); }
+
+// the siren: two tones wailing, swelling with how near the patrol is
+function sirenUpdate(k, dt) {
+  if (!AU.ctx) return; const ctx = AU.ctx;
+  if (!AU.siren) { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'square'; o.frequency.value = 700; g.gain.value = 0; o.connect(g); g.connect(AU.sfx); o.start(); AU.siren = { o, g, ph: 0 }; }
+  const S = AU.siren; S.ph += dt * 1.6; S.o.frequency.setTargetAtTime(640 + 260 * (0.5 + 0.5 * Math.sin(S.ph * TAU)), ctx.currentTime, 0.05);
+  S.g.gain.setTargetAtTime(k * 0.07, ctx.currentTime, 0.1);
+}
