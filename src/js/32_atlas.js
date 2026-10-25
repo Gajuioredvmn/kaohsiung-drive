@@ -6,10 +6,10 @@ const ATLAS = { W: 4096, items: [], tiles: {}, canvas: null, th: [], shops: {}, 
 const PPM = 20, TPM = 32;   // pixels per metre: facades; repeating tiles
 function tile(name, px) { ATLAS.items.push({ name, px }); return name; }
 function atlasBuild() {
-  const items = ATLAS.items.slice().sort((a, b) => b.px.h - a.px.h), W = ATLAS.W, c = canvas(W, W), g = c.getContext('2d');
+  const items = ATLAS.items.slice().sort((a, b) => (b.px.ch || b.px.h) - (a.px.ch || a.px.h)), W = ATLAS.W, c = canvas(W, W), g = c.getContext('2d');
   let x = 0, y = 0, rowH = 0, n = 0; const G = 2;
   for (const it of items) {
-    const w = it.px.w, h = it.px.h; if (x + w + 2 * G > W) { x = 0; y += rowH + 2 * G; rowH = 0; } if (y + h + 2 * G > W) { reportErr('atlas full at ' + n); break; }
+    const w = it.px.cw || it.px.w, h = it.px.ch || it.px.h; if (x + w + 2 * G > W) { x = 0; y += rowH + 2 * G; rowH = 0; } if (y + h + 2 * G > W) { reportErr('atlas full at ' + n); break; }
     const cv = it.px.toCanvas();
     g.drawImage(cv, x + G, y + G);
     // a gutter that repeats the edges, so the filters never read the neighbour
@@ -216,6 +216,7 @@ function paintTempleWall() { const S = 128, px = new Pix(S, S); px.rect(0, 0, S,
 function paintAwning(seed) { const r = mulberry(seed), px = new Pix(64, 32), a = r.pick([0xd02820, 0x2050c0, 0x18a048, 0xf0c020]), b = 0xf0f0e8; for (let x = 0; x < 64; x += 16) { px.rect(x, 0, 8, 32, a); px.rect(x + 8, 0, 8, 32, b); } for (let x = 0; x < 64; x += 8) px.rect(x, 24, 4, 8, shadeHex(a, 0.7)); return px; }
 // ---------- paint everything and pack ----------
 function atlasPaint() {
+  if (STYLE.toon) return atlasPaintToon();
   tile('white', paintPlain(0xf0f0ec)); tile('dark', paintPlain(0x2a2a30)); tile('black', paintPlain(0x101014)); tile('red', paintPlain(0xd02820)); tile('yellow', paintPlain(0xf0c020)); tile('green', paintPlain(0x18a048)); tile('grey', paintPlain(0x8a8a90)); tile('steel', paintPlain(0xb8bcc0)); tile('blue', paintPlain(0x2050c0)); tile('orange', paintPlain(0xf08020)); tile('kerb', paintPlain(0xd0ccc4)); tile('ceil', paintPlain(0x3a3630)); tile('tank', paintPlain(0xc8ccd0)); tile('sand', paintPlain(0xe4d4a4));
   const S = 4 * TPM;
   tile('asph', (() => { const px = new Pix(S, S); noiseFill(px, 0, 0, S, S, 0x4c4c54, 0x56565e, 5); for (let k = 0; k < 10; k++) px.rectD(Math.floor(hash1(k) * S), Math.floor(hash1(k + 9) * S), 8, 20, 0x48484f, 0x52525a, 0.5); return px; })());

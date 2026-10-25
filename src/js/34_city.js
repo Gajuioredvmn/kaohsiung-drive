@@ -89,7 +89,7 @@ function wall(g, x, z, dx, dz, w, y0, y1, tile, uvw, uvh, col) { const x1 = x + 
 // ---------- the roads ----------
 function buildRoads() {
   for (const e of MAP.edges) {
-    const s0 = Math.min(e.ta, e.len * 0.49), s1 = e.len - Math.min(e.tb, e.len * 0.49);
+    const ov = STYLE.toon ? 0.8 : 0, s0 = Math.max(0, Math.min(e.ta, e.len * 0.49) - (e.a.out && e.a.out.length > 1 ? ov : 0)), s1 = Math.min(e.len, e.len - Math.min(e.tb, e.len * 0.49) + (e.b.out && e.b.out.length > 1 ? ov : 0));
     if (s1 - s0 < 0.5) continue;
     const pts = polyCut(e.pts, s0, s1); if (pts.length < 2) continue;
     // long or sloping strips are subdivided so the height can follow the ground
@@ -326,7 +326,7 @@ function buildFurniture() {
     if (e.lvl || e.ramp || e.tunnel || !e.strip || e.K.cls < 1 || e.kind === 'rural') continue;
     const S = e.strip, pts = S.pts, L = polyLen(pts), hw = e.w / 2, sw = e.K.sw;
     // lamps alternate sides down the street; trees between them on the wider roads; scooters along the kerb
-    for (let s = 12, k = 0; s < L - 8; s += 26, k++) {
+    for (let s = STYLE.toon ? 7 : 12, k = 0; s < L - 6; s += STYLE.toon ? 19 : 26, k++) {
       const p = polyAt(pts, s), side = e.K.cls >= 3 ? 0 : (k % 2 ? 1 : -1), nx = Math.cos(p.yaw), nz = -Math.sin(p.yaw);
       if (e.K.cls < 3) { const x = p.x + nx * (hw + 0.6) * side, z = p.z + nz * (hw + 0.6) * side; if (!inLot(x, z)) lampPost(x, z, p.yaw + (side > 0 ? Math.PI / 2 : -Math.PI / 2), false); }
       else for (const sd of [-1, 1]) { const x = p.x + nx * (hw + 0.6) * sd, z = p.z + nz * (hw + 0.6) * sd; if (!inLot(x, z)) lampPost(x, z, p.yaw + (sd > 0 ? Math.PI / 2 : -Math.PI / 2), false); }

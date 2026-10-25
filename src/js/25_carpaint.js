@@ -82,7 +82,7 @@ function carMetrics(spec) { return { BW: Math.round(spec.W * CPX) }; }
 // set further back and lower and aimed at the car's middle, and the front wheels and the nose painted since they show
 function paintCarRear(spec, steer, brake, phase, opt) {
   const O = opt || {}, CW = O.W || CFW, CH = O.H || CFH, GY = O.gy || CGY, D = O.D || CAM_S.D, HC = O.camH || CAM_S.H, PV = O.pivot || 0;
-  const px = new Pix(CW, CH), cx = CW / 2, P = carPal(spec.color), G = carGeo(spec);
+  const px = STYLE.toon && O.ppm ? Object.assign(new VPix(CW, CH, 1.5), { olw: 1.8 }) : new Pix(CW, CH), cx = CW / 2, P = carPal(spec.color), G = carGeo(spec);
   const yaw = O.yaw == null ? CAR_YAW[steer + 2] : O.yaw, cy = Math.cos(yaw), sy = Math.sin(yaw), turn = O.yaw != null;
   const zT = G.secs[0].z, f = O.ppm ? O.ppm * D : CPX * (D + zT), Y0s = GY - (HC * f) / D;
   const chrome = !!spec.chrome, interior = spec.interior, crew = CREW[spec.id] || [];
@@ -414,7 +414,7 @@ function carTurnFrame(spec, i) {
   const key = spec.id + ':turn', fr = CAR_SPR[key] || (CAR_SPR[key] = new Array(TURN_N));
   if (fr[i]) return fr[i];
   const G = carGeo(spec), o = Object.assign({ yaw: (i / TURN_N) * TAU, pivot: (G.secs[0].z + G.secs[G.secs.length - 1].z) / 2 }, TURN_OPT);
-  return (fr[i] = paintCarRear(spec, 0, false, 0, o).toCanvas());
+  const px = paintCarRear(spec, 0, false, 0, o), cv = px.toCanvas(); cv.__s = px.s || 1; return (fr[i] = cv);
 }
 function carTurn(spec) { const out = []; for (let i = 0; i < TURN_N; i++) out.push(carTurnFrame(spec, i)); return out; }
 function carSide(spec, scale) { const key = spec.id + ':' + (scale || 52); return CAR_SPR[key] || (CAR_SPR[key] = paintCarSide(spec, scale).toCanvas()); }

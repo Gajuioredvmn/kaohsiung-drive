@@ -227,7 +227,7 @@ function sign(x, z, yaw, text, fg, bg, scale) {
   const k = scale || 1, name = 'sg_' + text, y0 = terrainH(x, z) + 0.14, st = T('steel');
   box(x, y0, z, yaw, 0.3, 3 * k, 0.3, st, st, st); box(x, y0 + 3 * k, z, yaw, 8 * k, 2 * k, 0.3, T(name), T(name), st, null, 0, 0);
 }
-function paintSign(text, fg, bg) { const px = new Pix(256, 64); px.rect(0, 0, 256, 64, bg); px.rect(0, 0, 256, 3, 0xffffff); px.rect(0, 61, 256, 3, 0x000000); px.text(text, 128, 10, 44, fg, { align: 'center', maxW: 240 }); return px; }
+function paintSign(text, fg, bg) { if (STYLE.toon) return tSign(text, fg, bg); const px = new Pix(256, 64); px.rect(0, 0, 256, 64, bg); px.rect(0, 0, 256, 3, 0xffffff); px.rect(0, 61, 256, 3, 0x000000); px.text(text, 128, 10, 44, fg, { align: 'center', maxW: 240 }); return px; }
 // the riverside: lamps and trees along both banks of 愛河, and the little boats on the water
 function buildRiverside() {
   const pts = MAP.river, r = mulberry(55), L = polyLen(pts);
@@ -250,4 +250,4 @@ function moreTiles() {
   const seen = new Set(); for (const [t, fg, bg] of names) { if (seen.has(t)) continue; seen.add(t); tile('sg_' + t, paintSign(t, fg, bg)); }
   tile('mrt_red', paintMrt(0xd82a2a)); tile('mrt_orange', paintMrt(0xd87a1a));
 }
-function paintMrt(col) { const px = new Pix(128, 40); px.rect(0, 0, 128, 40, col); px.rect(4, 4, 120, 32, 0xffffff); px.text('高雄捷運', 64, 8, 24, col, { align: 'center', maxW: 116 }); return px; }
+function paintMrt(col) { if (STYLE.toon) return tMrt(col); const px = new Pix(128, 40); px.rect(0, 0, 128, 40, col); px.rect(4, 4, 120, 32, 0xffffff); px.text('高雄捷運', 64, 8, 24, col, { align: 'center', maxW: 116 }); return px; }

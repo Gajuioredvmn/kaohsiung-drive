@@ -43,12 +43,13 @@ const BILLBOARD_VS = `
 const BILLBOARD_FS = `
   precision mediump float; uniform sampler2D map; uniform vec3 tint; uniform vec3 fogColor; uniform float fogNear, fogFar;
   varying vec2 vUv; varying float vFog;` + SHADOW_GLSL + `
-  void main() { vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard; float sh = mix(0.5, 1.0, shadowAt(0.6)); float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(c.rgb * tint * sh, fogColor, f), 1.0); }`;
+  uniform float propK;
+  void main() { vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard; float sh = mix(0.5, 1.0, shadowAt(0.6)); float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(c.rgb * tint * sh * propK, fogColor, f), 1.0); }`;
 // the city's shaders: a tile rectangle per vertex (or per box face), repeated with fract, lit by the sun direction
 // the tile repeats with fract(); the mip level comes from the unbroken uv, so the seams between repeats do not blur
 const CITY_FS = `
   precision mediump float; uniform sampler2D map; uniform vec3 tint, fogColor; uniform float fogNear, fogFar;
-  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying vec3 vLit; varying float vFog;` + SHADOW_GLSL + `
+  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying vec3 vLit; varying float vFog; varying float vSeed; uniform float nightK; uniform vec3 litK;` + SHADOW_GLSL + `
   void main() { vec2 sz = vTile.zw - vTile.xy; vec2 t = vTile.xy + fract(vUv) * sz;
     #ifdef USE_GRAD
     vec4 c = texture2DGradEXT(map, t, dFdx(vUv) * sz, dFdy(vUv) * sz);
@@ -58,21 +59,46 @@ const CITY_FS = `
     if (c.a < 0.5) discard;
     // vLit: x the ambient part, y the sun's part (shadowed here), z the height above the wall's foot (occlusion)
     float ao = 1.0 - 0.22 * (1.0 - smoothstep(0.0, 2.4, vLit.z));
-    float light = (vLit.x + vLit.y * shadowAt(vLit.y > 0.001 ? 1.0 : 0.0)) * ao;
-    vec3 col = c.rgb * vCol * light * tint; float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(col, fogColor, f), 1.0); }`;
+    float sv = shadowAt(vLit.y > 0.001 ? 1.0 : 0.0), light = (vLit.x + vLit.y * sv) * ao;
+    vec3 col = c.rgb * vCol * light * tint;
+    #ifdef TOON
+    col *= mix(vec3(0.84, 0.86, 1.06), vec3(1.0), clamp(sv * step(0.001, vLit.y) + 0.35 * (1.0 - step(0.001, vLit.y)), 0.0, 1.0));   // shade leans cool
+    if (c.a < 0.975 && nightK > 0.0) {   // after dark: the flagged windows, shop fronts and signs light up
+      // a window's alpha (0.60 to 0.74) is its own random number, so a window is lit or dark as a whole; 0.8 a shop, 0.9 a sign
+      float a = c.a, isWin = 1.0 - smoothstep(0.75, 0.77, a), isShop = smoothstep(0.765, 0.785, a) * (1.0 - smoothstep(0.83, 0.85, a)), isSign = smoothstep(0.85, 0.87, a);
+      float v = clamp((a - 0.6) / 0.14, 0.0, 1.0), on = step(fract(v * 7.31 + vSeed * 0.618), 0.56);
+      vec3 warm = fract(v * 13.7 + vSeed * 0.31) < 0.16 ? vec3(0.6, 0.76, 1.0) : vec3(1.0, 0.74, 0.36);
+      float eN = isWin * on + isShop + isSign;
+      vec3 litN = isWin * on * mix(c.rgb, warm, 0.85) * 1.05 + isShop * mix(c.rgb, vec3(1.0, 0.93, 0.78), 0.3) * 1.15 + isSign * (c.rgb * 1.15 + 0.04);
+      float lod = 0.0;
+      #ifdef USE_GRAD
+      vec2 dd = vec2(length(dFdx(vUv * sz)), length(dFdy(vUv * sz))) * 4096.0; lod = log2(max(max(dd.x, dd.y), 0.0001));
+      #endif
+      // far off a window is smaller than a texel: the facade just glows by how much window it holds
+      float far = smoothstep(1.3, 2.8, lod), eF = clamp((0.985 - a) * 2.4, 0.0, 1.0) * 0.55;
+      vec3 lit = mix(litN / max(eN, 0.001), mix(c.rgb, vec3(1.0, 0.74, 0.4), 0.7) * 0.9, far); float e = mix(eN, eF, far);
+      col = mix(col, lit * litK, clamp(e, 0.0, 1.0) * nightK);
+    }
+    #endif
+    float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(col, fogColor, f), 1.0); }`;
 const GEO_VS = `
   attribute vec4 tile; attribute vec3 color;
-  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying vec3 vLit; varying float vFog; varying vec4 vShadow;
+  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying vec3 vLit; varying float vFog; varying vec4 vShadow; varying float vSeed;
   uniform vec3 sunDir; uniform mat4 shadowMat;
-  void main() { vUv = uv; vTile = tile; vCol = color; float nd = dot(normal, sunDir); vLit = vec3(0.4 + 0.1 * normal.y, 0.62 * max(0.0, nd), 10.0);
+  void main() { vUv = uv; vTile = tile; vCol = color; vSeed = 0.0; float nd = dot(normal, sunDir);
+    #ifdef TOON
+    vLit = vec3(0.54 + 0.08 * normal.y, 0.5 * max(0.0, nd), 10.0);
+    #else
+    vLit = vec3(0.4 + 0.1 * normal.y, 0.62 * max(0.0, nd), 10.0);
+    #endif
     vShadow = shadowMat * vec4(position + normal * 0.25, 1.0);
     vec4 mv = modelViewMatrix * vec4(position, 1.0); vFog = -mv.z; gl_Position = projectionMatrix * mv; }`;
 const BOX_VS = `
   attribute vec3 iPos, iSize, iCol, iRep; attribute float iYaw, face; attribute vec4 iTF, iTS, iTT;
-  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying vec3 vLit; varying float vFog; varying vec4 vShadow;
+  varying vec2 vUv; varying vec4 vTile; varying vec3 vCol; varying vec3 vLit; varying float vFog; varying vec4 vShadow; varying float vSeed;
   uniform vec3 sunDir; uniform mat4 shadowMat;
   void main() {
-    vec3 ls = position * iSize; float s = sin(iYaw), c = cos(iYaw);
+    vec3 ls = position * iSize; vSeed = floor(fract(iPos.x * 0.137 + iPos.z * 0.291) * 97.0); float s = sin(iYaw), c = cos(iYaw);
     vec3 wp = iPos + vec3(ls.x * c + ls.z * s, ls.y, -ls.x * s + ls.z * c);
     vec3 wn = vec3(normal.x * c + normal.z * s, normal.y, -normal.x * s + normal.z * c);
     int f = int(face + 0.5); vec2 uv2;
@@ -83,7 +109,11 @@ const BOX_VS = `
     else { uv2 = iRep.y > 0.0 ? vec2((position.x + 0.5) * iSize.x, -position.z * iSize.z) / iRep.y : vec2(position.x + 0.5, -position.z) * 0.998; vTile = iTT; }
     vUv = uv2; vCol = iCol;
     float nd = dot(wn, sunDir), under = f == 5 ? 0.3 : 1.0;
+    #ifdef TOON
+    vLit = vec3((0.56 + 0.08 * wn.y) * under, 0.48 * max(0.0, nd) * under, f == 4 ? 10.0 : ls.y);
+    #else
     vLit = vec3((0.44 + 0.1 * wn.y) * under, 0.58 * max(0.0, nd) * under, f == 4 ? 10.0 : ls.y);
+    #endif
     vShadow = shadowMat * vec4(wp + wn * 0.3, 1.0);
     vec4 mv = modelViewMatrix * vec4(wp, 1.0); vFog = -mv.z; gl_Position = projectionMatrix * mv;
   }`;
@@ -95,7 +125,7 @@ function r3Init() {
   scene.fog = new THREE.Fog(R3.tod.fog, FOG_NEAR, FOG_FAR); scene.background = new THREE.Color(R3.tod.sky);
   R3.cam = new THREE.PerspectiveCamera(42, 16 / 9, 0.6, 2600);
   R3.sun = new THREE.Vector3(...R3.tod.sun).normalize();
-  r3ShadowInit(); r3Ground(); r3Water(); r3Sky(); r3Horizon(); r3Atlas(); r3City(); r3Props(); r3Traffic(); r3Shadow(); r3Marks();
+  r3ShadowInit(); r3Ground(); r3Water(); r3Sky(); r3Horizon(); r3Atlas(); r3City(); r3Props(); r3Traffic(); r3Shadow(); r3Marks(); if (STYLE.toon) r3LightsInit();
   for (const m of CITY.meshes || []) scene.add(m);
   // the finish needs a depth texture: WebGL2 (every modern phone); otherwise the plain picture
   if (rd.capabilities.isWebGL2) { try { r3Post(); } catch (e) { R3.post = null; reportErr('post: ' + e.message); } } else R3.postOff = 'WebGL1';
@@ -103,7 +133,8 @@ function r3Init() {
   addEventListener('resize', r3Resize);
 }
 function r3Resize() {
-  const W = innerWidth, H = innerHeight, k = Math.min(1, 720 / Math.max(W, H)) * (SET.quality === 'low' ? 0.7 : 1);
+  const W = innerWidth, H = innerHeight, toon = STYLE.toon;
+  const k = toon ? Math.min(Math.min(2, devicePixelRatio || 1), (SET.quality === 'low' ? 960 : 1440) / Math.max(W, H)) * (R3.dyn || 1) : Math.min(1, 720 / Math.max(W, H)) * (SET.quality === 'low' ? 0.7 : 1);
   R3.w = Math.round(W * k); R3.h = Math.round(H * k); R3.pixelK = k;
   R3.renderer.setSize(R3.w, R3.h, false); R3.cam.aspect = W / H; R3.cam.updateProjectionMatrix();
   if (R3.post) r3PostResize();
@@ -121,28 +152,39 @@ const WATER_FS = `
     float w3 = sin(p.x * 2.3 + p.y * 1.7 + t * 3.1) * 0.5; vec3 n = normalize(vec3(w1 * 0.22 + w2 * 0.18 + w3 * 0.1, 1.0, w1 * 0.18 - w2 * 0.22 - w3 * 0.1));
     vec3 v = normalize(camPos - vW), h = normalize(v + sunDir);
     float fres = pow(1.0 - max(0.0, dot(n, v)), 3.0), spec = pow(max(0.0, dot(n, h)), 180.0) * 1.6 + pow(max(0.0, dot(n, h)), 24.0) * 0.12;
+    #ifdef TOON
+    float band = step(0.35, w1 * 0.5 + w2 * 0.4), crest = smoothstep(0.86, 0.9, sin(p.x * 0.42 + p.y * 0.17 + t * 1.1 + w1 * 1.4) * 0.5 + 0.5) * step(0.2, w1);
+    vec3 col = mix(deep, shallow, 0.3 + 0.22 * band) * (0.86 + 0.18 * max(0.0, sunDir.y));
+    col = mix(col, skyCol, step(0.45, fres) * 0.3); col = mix(col, vec3(0.93, 0.97, 1.0), crest * 0.8) + vec3(1.0, 0.97, 0.9) * step(0.6, spec) * 0.7 * clamp(sunDir.y * 2.0, 0.0, 1.0);
+    #else
     vec3 col = mix(deep, shallow, 0.5 + 0.5 * w1 * 0.35) * (0.7 + 0.5 * max(0.0, dot(n, sunDir)));
     col = mix(col, skyCol, fres * 0.55) + vec3(1.0, 0.97, 0.9) * spec * clamp(sunDir.y * 2.0, 0.0, 1.0);
+    #endif
     float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(col * tint, fogColor, f), 1.0); }`;
 function r3Water() {
   const shapes = [];
   for (const poly of MAP.water) { const sh = new THREE.Shape(); poly.forEach(([x, z], i) => (i ? sh.lineTo(x, z) : sh.moveTo(x, z))); shapes.push([sh, -0.95]); }
   // the river as a ribbon
   { const pts = MAP.river, off = polyOffsets(pts, 23), sh = new THREE.Shape(); off.L.forEach(([x, z], i) => (i ? sh.lineTo(x, z) : sh.moveTo(x, z))); off.R.slice().reverse().forEach(([x, z]) => sh.lineTo(x, z)); shapes.push([sh, -2.05]); }
-  const mat = new THREE.ShaderMaterial({ vertexShader: WATER_VS, fragmentShader: WATER_FS, uniforms: { tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, sunDir: { value: R3.sun }, camPos: { value: new THREE.Vector3() }, t: { value: 0 }, deep: { value: new THREE.Color(0x2a7ec0) }, shallow: { value: new THREE.Color(0x58c0dc) }, skyCol: { value: new THREE.Color(0xa8ccec) } } });
+  const mat = new THREE.ShaderMaterial({ vertexShader: WATER_VS, fragmentShader: WATER_FS, uniforms: { tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, sunDir: { value: R3.sun }, camPos: { value: new THREE.Vector3() }, t: { value: 0 }, deep: { value: new THREE.Color(STYLE.toon ? 0x3a7eb4 : 0x2a7ec0) }, shallow: { value: new THREE.Color(STYLE.toon ? 0x6cc6e2 : 0x58c0dc) }, skyCol: { value: new THREE.Color(0xa8ccec) } }, defines: STYLE.toon ? { TOON: '' } : {} });
   R3.waterMat = mat; R3.water = [];
   for (const [sh, y] of shapes) { const geo = new THREE.ShapeGeometry(sh, 1); geo.rotateX(Math.PI / 2); const m = new THREE.Mesh(geo, mat); m.position.y = y; m.frustumCulled = false; scene3Add(m); R3.water.push(m); }
 }
 // ---------- the ground ----------
 const GROUND_VS = `
-  varying vec2 vUv; varying vec3 vLit; varying float vFog; varying vec4 vShadow; uniform vec3 sunDir; uniform mat4 shadowMat;
-  void main() { vUv = uv; vec4 wp = modelMatrix * vec4(position, 1.0); float nd = dot(normalize(normal), sunDir); vLit = vec3(0.42, 0.62 * max(0.0, nd), 10.0);
+  varying vec2 vUv; varying vec3 vLit; varying float vFog; varying vec4 vShadow; varying vec2 vW; uniform vec3 sunDir; uniform mat4 shadowMat;
+  void main() { vUv = uv; vec4 wp = modelMatrix * vec4(position, 1.0); vW = wp.xz; float nd = dot(normalize(normal), sunDir); vLit = vec3(0.42, 0.62 * max(0.0, nd), 10.0);
     vShadow = shadowMat * vec4(wp.xyz + vec3(0.0, 0.2, 0.0), 1.0); vec4 mv = viewMatrix * wp; vFog = -mv.z; gl_Position = projectionMatrix * mv; }`;
 const GROUND_FS = `
-  precision mediump float; uniform sampler2D map; uniform vec3 tint, fogColor; uniform float fogNear, fogFar;
-  varying vec2 vUv; varying vec3 vLit; varying float vFog;` + SHADOW_GLSL + `
+  precision mediump float; uniform sampler2D map, detail; uniform vec3 tint, fogColor; uniform float fogNear, fogFar;
+  varying vec2 vUv; varying vec3 vLit; varying float vFog; varying vec2 vW;` + SHADOW_GLSL + `
   void main() { vec4 c = texture2D(map, vUv); float light = vLit.x + vLit.y * shadowAt(1.0);
-    vec3 col = c.rgb * light * tint; float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(col, fogColor, f), 1.0); }`;
+    vec3 col = c.rgb * light * tint;
+    #ifdef TOON
+    vec4 dt = texture2D(detail, vW / 7.0); float green = clamp((c.g - max(c.r, c.b)) * 7.0, 0.0, 1.0) * (1.0 - smoothstep(55.0, 150.0, vFog));
+    col = mix(col, dt.rgb * light * tint, dt.a * green);
+    #endif
+    float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(col, fogColor, f), 1.0); }`;
 // the sun's shadow map: a depth picture from the sun over the ground round the car, redrawn every frame
 const SHADOW_SIZE = 2048, SHADOW_R = 190;
 function shadowUni() { return { shadowMap: { value: R3.shadowRT ? R3.shadowRT.depthTexture : null }, shadowMat: { value: R3.shadowMat || (R3.shadowMat = new THREE.Matrix4()) }, shadowOn: { value: 0 } }; }
@@ -163,7 +205,7 @@ function r3ShadowPass() {
   const sc = R3.sunCam, S = R3.sun; sc.position.set(fx + S.x * 700, S.y * 700, fz + S.z * 700); sc.lookAt(fx, 0, fz); sc.updateMatrixWorld(); sc.updateProjectionMatrix();
   R3.shadowMat.multiplyMatrices(sc.projectionMatrix, sc.matrixWorldInverse);
   // what the sun sees: the chunks round the box, the props, the traffic and the people; not the sky, the car's quad or the glows
-  const hidden = [R3.sky, R3.car, R3.shadow, R3.fxMesh, R3.marks, ...(R3.water || [])].filter((m) => m); const was = hidden.map((m) => m.visible); for (const m of hidden) m.visible = false;
+  const hidden = [R3.sky, R3.car, R3.shadow, R3.fxMesh, R3.marks, R3.glows && R3.glows.m, R3.pools && R3.pools.m, R3.horizon, ...(R3.water || [])].filter((m) => m); const was = hidden.map((m) => m.visible); for (const m of hidden) m.visible = false;
   for (const e of R3.chunks) { const d = Math.hypot(e.cx - fx, e.cz - fz) - e.r; const vis = d < SHADOW_R * 1.3; for (const m of e.meshes) m.visible = vis; }
   for (const m of [R3.propMesh, R3.trafficMesh, R3.peopleMesh]) if (m) m.material.uniforms.camPos.value.copy(sc.position);
   const fogWas = R3.scene.fog; R3.scene.fog = null;
@@ -178,13 +220,21 @@ function r3Ground() {
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) { const x = pos.getX(i) + W / 2, z = pos.getZ(i) + W / 2; const k = groundKind(x, z); pos.setY(i, k === GK.water ? (riverDist(x, z) < 30 ? -2.4 : -1.2) : terrainH(x, z)); }
   geo.computeVertexNormals();
-  const tex = new THREE.CanvasTexture(MAP.ground); tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-  const mat = new THREE.ShaderMaterial({ vertexShader: GROUND_VS, fragmentShader: GROUND_FS, uniforms: { map: { value: tex }, sunDir: { value: R3.sun }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, ...shadowUni() } });
+  const tex = new THREE.CanvasTexture(MAP.ground); tex.magFilter = STYLE.toon ? THREE.LinearFilter : THREE.NearestFilter; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  const mat = new THREE.ShaderMaterial({ vertexShader: GROUND_VS, fragmentShader: GROUND_FS, uniforms: { map: { value: tex }, detail: { value: STYLE.toon ? grassDetailTex() : null }, sunDir: { value: R3.sun }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, ...shadowUni() }, defines: STYLE.toon ? { TOON: '' } : {} });
   const m = new THREE.Mesh(geo, mat); m.position.set(W / 2, 0, W / 2); scene3Add(m); R3.ground = m;
   const sun = new THREE.DirectionalLight(0xfff0d8, 1.0); sun.position.set(R3.tod.sun[0] * 500, R3.tod.sun[1] * 500, R3.tod.sun[2] * 500); scene3Add(sun); R3.sunLight = sun;
   R3.ambLight = new THREE.AmbientLight(0xc0d0e8, 1.0); scene3Add(R3.ambLight);
 }
 function scene3Add(m) { R3.scene.add(m); }
+// the illustrated grass: blades and little flowers that repeat every seven metres over the green ground
+function grassDetailTex() {
+  const S = 448, c = canvas(S, S), g = c.getContext('2d'), r = mulberry(77); g.lineCap = 'round';
+  const at = (x, y, f) => { for (const dx of [-S, 0, S]) for (const dy of [-S, 0, S]) f(x + dx, y + dy); };
+  for (let i = 0; i < 260; i++) { const x = r() * S, y = r() * S, s = 5 + r() * 6, col = r() < 0.5 ? '#3f7a3c' : '#86c467'; at(x, y, (X, Y) => { g.strokeStyle = col; g.lineWidth = 2.2; g.beginPath(); g.moveTo(X - s * 0.6, Y - s); g.lineTo(X, Y); g.lineTo(X + s * 0.5, Y - s * 1.1); g.moveTo(X, Y); g.lineTo(X + 0.6, Y - s * 1.3); g.stroke(); }); }
+  for (let i = 0; i < 26; i++) { const x = r() * S, y = r() * S, col = ['#fff4f0', '#ffd84d', '#ff9fc4'][Math.floor(r() * 3)]; at(x, y, (X, Y) => { g.fillStyle = col; for (let a = 0; a < 5; a++) { g.beginPath(); g.arc(X + Math.cos(a * 1.26) * 3, Y + Math.sin(a * 1.26) * 3, 2.3, 0, TAU); g.fill(); } g.fillStyle = '#f2a33a'; g.beginPath(); g.arc(X, Y, 1.7, 0, TAU); g.fill(); }); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.anisotropy = 4; t.colorSpace = THREE.SRGBColorSpace; return t;
+}
 // the land beyond the map: the hills and mountains round 高雄 as a hazy backdrop, drawn just in front of the sky dome
 // (real metres from 美麗島: x east, z south; rx/rz the half extents, h the height)
 const FAR_HILLS = [
@@ -232,8 +282,13 @@ const TODS = {
   dusk: { top: 0x3a4a8a, horizon: 0xf0a070, fog: 0xe8b090, tint: [1.0, 0.84, 0.7], grade: [0.95, 0.82, 0.72], sun: [-0.85, 0.2, 0.48], sunI: 0.8, sunC: 0xffb070, amb: 0.75, ambC: 0xa090b0 },
   night: { top: 0x060a1c, horizon: 0x18203a, fog: 0x10162a, tint: [0.42, 0.46, 0.6], grade: [0.38, 0.42, 0.62], sun: [0.3, 0.6, 0.4], sunI: 0.25, sunC: 0x8090c0, amb: 0.55, ambC: 0x5a6a90 },
 };
+const TODS_T = {
+  day: { top: 0x4ea2ea, horizon: 0xc4e6f6, fog: 0xd2eaf4, tint: [1.0, 0.99, 0.96], sun: [-0.45, 0.55, 0.7], sunI: 1.0, sunC: 0xfff0d8, amb: 1.0, ambC: 0xc0d0e8, bloom: [0.86, 1.0], night: 0 },
+  dusk: { top: 0x45488e, horizon: 0xf6a586, fog: 0xeab49c, tint: [1.0, 0.86, 0.78], grade: [0.98, 0.84, 0.8], sun: [-0.85, 0.2, 0.48], sunI: 0.8, sunC: 0xffb070, amb: 0.75, ambC: 0xa090b0, bloom: [0.7, 0.98], night: 0.55 },
+  night: { top: 0x0d1030, horizon: 0x2c2f60, fog: 0x1d2142, tint: [0.42, 0.44, 0.72], grade: [0.52, 0.54, 0.8], sun: [0.3, 0.6, 0.4], sunI: 0.25, sunC: 0x8090c0, amb: 0.55, ambC: 0x5a6a90, bloom: [0.55, 0.9], night: 1 },
+};
 function setTod(kind) {
-  const T = TODS[kind] || TODS.day; R3.todKind = kind in TODS ? kind : 'day'; R3.gradeDay = R3.gradeDay || [1.03, 1.0, 0.96];
+  const T = (STYLE.toon ? TODS_T : TODS)[kind] || TODS.day; R3.todKind = kind in TODS ? kind : 'day'; R3.gradeDay = R3.gradeDay || [1.03, 1.0, 0.96];
   R3.tod = { tint: T.tint, sky: T.horizon, fog: T.fog, sun: T.sun }; if (R3.sun) R3.sun.set(...T.sun).normalize();
   if (R3.scene && R3.scene.fog) R3.scene.fog.color.setHex(T.fog);
   if (R3.sky) { const u = R3.sky.material.uniforms; u.top.value.setHex(T.top); u.horizon.value.setHex(T.horizon); u.haze.value.setHex(T.fog); }
@@ -245,6 +300,13 @@ function setTod(kind) {
   // the darkness goes into the post pass's grade; without the post pass (quality off) the tint carries it instead
   const g = T.grade || R3.gradeDay; if (R3.post && R3.post.comp) R3.post.comp.uniforms.grade.value.set(g[0], g[1], g[2]);
   if (R3.fxMesh) { const u = R3.fxMesh.material.uniforms; if (u.tint) u.tint.value.set(Math.min(2.6, 1 / g[0]), Math.min(2.6, 1 / g[1]), Math.min(2.6, 1 / g[2])); }   // the glows stay bright through the grade
+  if (STYLE.toon) {
+    const post = R3.post && SET.quality !== 'off' && !R3.postFail, lk = post ? [1 / g[0], 1 / g[1], 1 / g[2]] : [1, 1, 1];
+    for (const m of [R3.geoMat, R3.topMat, R3.boxMat]) if (m) { m.uniforms.nightK.value = T.night || 0; m.uniforms.litK.value.set(lk[0], lk[1], lk[2]); }
+    for (const m of [R3.propMesh, R3.trafficMesh]) if (m && m.material.uniforms.propK) m.material.uniforms.propK.value = 1 - 0.3 * (T.night || 0);
+    if (R3.post && R3.post.bright) R3.post.bright.uniforms.thr.value.set(T.bloom[0], T.bloom[1]);
+    for (const L of [R3.glows, R3.pools]) if (L) { L.m.material.uniforms.k.value = T.night || 0; L.m.material.uniforms.kc.value.set(Math.min(2.4, lk[0]), Math.min(2.4, lk[1]), Math.min(2.4, lk[2])); }
+  }
   if (SET.quality === 'off' || R3.postFail) for (const m of [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material, R3.horizon && R3.horizon.material]) { const u = m && m.uniforms; if (u && u.tint) u.tint.value.set(T.tint[0] * g[0] / R3.gradeDay[0], T.tint[1] * g[1] / R3.gradeDay[1], T.tint[2] * g[2] / R3.gradeDay[2]); }
 
 }
@@ -252,10 +314,10 @@ function setTod(kind) {
 function r3Atlas() {
   const gl2 = R3.renderer.capabilities.isWebGL2, maxTex = R3.renderer.capabilities.maxTextureSize;
   let src = ATLAS.canvas; if (maxTex < ATLAS.W) { const c = canvas(maxTex, maxTex); c.getContext('2d').drawImage(src, 0, 0, maxTex, maxTex); src = c; }
-  const tex = new THREE.CanvasTexture(src); tex.magFilter = THREE.NearestFilter; tex.minFilter = gl2 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; tex.generateMipmaps = gl2; tex.anisotropy = Math.min(4, R3.renderer.capabilities.getMaxAnisotropy()); tex.colorSpace = THREE.SRGBColorSpace;
+  const tex = new THREE.CanvasTexture(src); tex.magFilter = STYLE.toon ? THREE.LinearFilter : THREE.NearestFilter; tex.minFilter = gl2 ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; tex.generateMipmaps = gl2; tex.anisotropy = Math.min(STYLE.toon ? 8 : 4, R3.renderer.capabilities.getMaxAnisotropy()); tex.colorSpace = THREE.SRGBColorSpace;
   R3.atlas = tex;
-  const uni = () => ({ map: { value: tex }, sunDir: { value: R3.sun }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, ...shadowUni() });
-  const defs = gl2 ? { USE_GRAD: '' } : {};
+  const uni = () => ({ map: { value: tex }, sunDir: { value: R3.sun }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, nightK: { value: 0 }, litK: { value: new THREE.Vector3(1, 1, 1) }, ...shadowUni() });
+  const defs = gl2 ? { USE_GRAD: '' } : {}; if (STYLE.toon) defs.TOON = '';
   R3.geoMat = new THREE.ShaderMaterial({ vertexShader: GEO_VS, fragmentShader: CITY_FS, uniforms: uni(), side: THREE.DoubleSide, defines: defs });
   R3.topMat = new THREE.ShaderMaterial({ vertexShader: GEO_VS, fragmentShader: CITY_FS, uniforms: uni(), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, defines: defs });
   R3.boxMat = new THREE.ShaderMaterial({ vertexShader: BOX_VS, fragmentShader: CITY_FS, uniforms: uni(), defines: defs });
@@ -308,16 +370,16 @@ function r3Cull() {
 }
 // ---------- the props: an atlas and one instanced quad ----------
 function r3Props() {
-  const kinds = Object.values(PROPS.kinds), AW = 1024;
+  const kinds = Object.values(PROPS.kinds), AW = STYLE.toon ? 2048 : 1024, G2 = STYLE.toon ? 2 : 0;
   let x = 0, y = 0, rowH = 0; const atlas = canvas(AW, AW), g = atlas.getContext('2d');
-  kinds.sort((a, b) => b.px.h - a.px.h);
-  for (const K of kinds) { const w = K.px.w, h = K.px.h; if (x + w > AW) { x = 0; y += rowH; rowH = 0; } if (y + h > AW) break; g.drawImage(K.px.toCanvas(), x, y); K.uv = [x / AW, 1 - (y + h) / AW, (x + w) / AW, 1 - y / AW]; x += w + 1; rowH = Math.max(rowH, h + 1); }
-  const tex = new THREE.CanvasTexture(atlas); tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false; tex.colorSpace = THREE.SRGBColorSpace;
+  kinds.sort((a, b) => (b.px.ch || b.px.h) - (a.px.ch || a.px.h));
+  for (const K of kinds) { const w = K.px.cw || K.px.w, h = K.px.ch || K.px.h; if (x + w + G2 * 2 > AW) { x = 0; y += rowH; rowH = 0; } if (y + h + G2 * 2 > AW) { reportErr('props atlas full'); break; } g.drawImage(K.px.toCanvas(), x + G2, y + G2); K.uv = [(x + G2) / AW, 1 - (y + G2 + h) / AW, (x + G2 + w) / AW, 1 - (y + G2) / AW]; x += w + 1 + G2 * 2; rowH = Math.max(rowH, h + 1 + G2 * 2); }
+  const tex = new THREE.CanvasTexture(atlas); tex.magFilter = STYLE.toon ? THREE.LinearFilter : THREE.NearestFilter; tex.minFilter = STYLE.toon ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter; tex.generateMipmaps = STYLE.toon; tex.colorSpace = THREE.SRGBColorSpace;
   const n = PROPS.list.length, pos = new Float32Array(n * 3), size = new Float32Array(n * 2), uv = new Float32Array(n * 4), flip = new Float32Array(n);
   PROPS.list.forEach((p, i) => { const K = PROPS.kinds[p.k]; pos[i * 3] = p.x; pos[i * 3 + 1] = p.y - 0.05; pos[i * 3 + 2] = p.z; size[i * 2] = K.wM * p.s; size[i * 2 + 1] = K.hM * p.s; uv.set(K.uv, i * 4); flip[i] = p.flip ? 1 : 0; });
   const geo = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); geo.instanceCount = n;
   geo.setAttribute('iPos', new THREE.InstancedBufferAttribute(pos, 3)); geo.setAttribute('iSize', new THREE.InstancedBufferAttribute(size, 2)); geo.setAttribute('iUV', new THREE.InstancedBufferAttribute(uv, 4)); geo.setAttribute('iFlip', new THREE.InstancedBufferAttribute(flip, 1));
-  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, ...shadowUni() }, transparent: false });
+  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.propMesh = m; R3.propUV = geo.getAttribute('iUV'); R3.propTex = tex;
   // the walkers: the same atlas, a mesh of their own whose instances move
   const N = PEO.max, g2 = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g2.instanceCount = 0;
@@ -332,9 +394,37 @@ function r3Props() {
   g3.setAttribute('iPos', B.pos); g3.setAttribute('iSize', B.size); g3.setAttribute('iUV', B.uv); g3.setAttribute('iFlip', B.flip);
   const m3 = new THREE.Mesh(g3, mat); m3.frustumCulled = false; scene3Add(m3); R3.fxMesh = m3; R3.fxA = B; R3.fxMax = N3;
 }
+// the illustrated style's lights: soft banded glows facing the camera, and pools of light laid on the ground (both added on)
+const GLOW_VS = `attribute vec3 iPos; attribute float iSize; attribute vec3 iCol; varying vec2 vQ; varying vec3 vC; uniform vec3 camPos;
+  void main() { vec3 f = normalize(camPos - iPos), r = normalize(cross(vec3(0.0, 1.0, 0.0), f)), u = cross(f, r);
+    vec3 p = iPos + (r * position.x + u * position.y) * iSize + f * 0.4; vQ = position.xy * 2.0; vC = iCol; gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0); }`;
+const GLOW_FS = `precision mediump float; varying vec2 vQ; varying vec3 vC; uniform float k; uniform vec3 kc;
+  void main() { float r = length(vQ); if (r > 1.0) discard; float a = 1.0 - r, core = smoothstep(0.62, 0.8, a); a = a * a * 0.75; float b = floor(a * 4.0 + 0.55) / 4.0; gl_FragColor = vec4((vC * mix(a, b, 0.6) + vec3(1.0, 0.97, 0.88) * core) * kc * k, 1.0); }`;
+const POOL_VS = `attribute vec3 iPos; attribute float iSize; attribute vec3 iCol; varying vec2 vQ; varying vec3 vC;
+  void main() { vec3 p = iPos + vec3(position.x, 0.0, -position.y) * iSize; vQ = position.xy * 2.0; vC = iCol; gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0); }`;
+const POOL_FS = `precision mediump float; varying vec2 vQ; varying vec3 vC; uniform float k; uniform vec3 kc;
+  void main() { float r = length(vQ); if (r > 1.0) discard; float a = 1.0 - r; float b = floor(a * 3.0 + 0.8) / 3.0; gl_FragColor = vec4(vC * b * kc * k, 1.0); }`;
+function r3LightsInit() {
+  const mk = (vs, fs, N) => {
+    const g = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g.instanceCount = 0;
+    const A = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3), size: new THREE.InstancedBufferAttribute(new Float32Array(N), 1), col: new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3) };
+    for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute('iPos', A.pos); g.setAttribute('iSize', A.size); g.setAttribute('iCol', A.col);
+    const m = new THREE.Mesh(g, new THREE.ShaderMaterial({ vertexShader: vs, fragmentShader: fs, uniforms: { k: { value: 1 }, kc: { value: new THREE.Vector3(1, 1, 1) }, camPos: { value: new THREE.Vector3() } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    m.frustumCulled = false; m.renderOrder = 5; scene3Add(m); return { m, A, N, n: 0 };
+  };
+  R3.glows = mk(GLOW_VS, GLOW_FS, 1400); R3.pools = mk(POOL_VS, POOL_FS, 500);
+}
+const LAMP_C = [1.0, 0.8, 0.46], POOL_C = [0.62, 0.4, 0.12], HEAD_C = [1.0, 0.95, 0.8], TAIL_C = [1.0, 0.18, 0.12];
+function lightPut(L, x, y, z, s, c) { if (L.n >= L.N) return; const i = L.n++; L.A.pos.array[i * 3] = x; L.A.pos.array[i * 3 + 1] = y; L.A.pos.array[i * 3 + 2] = z; L.A.size.array[i] = s; L.A.col.array[i * 3] = c[0]; L.A.col.array[i * 3 + 1] = c[1]; L.A.col.array[i * 3 + 2] = c[2]; }
+function lightsDone(L) { L.m.geometry.instanceCount = L.n; for (const a of Object.values(L.A)) a.needsUpdate = true; }
 function r3FxUpdate() {
   const m = R3.fxMesh; if (!m) return; const A = R3.fxA, cam = R3.cam.position; let k = 0;
-  const put = (name, x, y, z) => { if (k >= R3.fxMax) return; const K = PROPS.kinds[name]; if (!K) return; A.pos.array[k * 3] = x; A.pos.array[k * 3 + 1] = y; A.pos.array[k * 3 + 2] = z; A.size.array[k * 2] = K.wM; A.size.array[k * 2 + 1] = K.hM; A.uv.array.set(K.uv, k * 4); A.flip.array[k] = 0; k++; };
+  const GL = R3.glows, PL = R3.pools; if (GL) { GL.n = 0; PL.n = 0; GL.m.material.uniforms.camPos.value.copy(cam); }
+  const glowOf = { glow_lamp: [2.4, LAMP_C], glow_head: [0.7, HEAD_C], glow_red: [0.5, TAIL_C] };
+  const put = (name, x, y, z) => {
+    if (GL && glowOf[name] && (name !== 'glow_red' || R3.todKind !== 'day')) { const [sz, c] = glowOf[name]; lightPut(GL, x, y, z, sz, c); if (name === 'glow_lamp') lightPut(PL, x, y - 6.8, z, 9, POOL_C); return; }
+    if (k >= R3.fxMax) return; const K = PROPS.kinds[name]; if (!K) return; A.pos.array[k * 3] = x; A.pos.array[k * 3 + 1] = y; A.pos.array[k * 3 + 2] = z; A.size.array[k * 2] = K.wM; A.size.array[k * 2 + 1] = K.hM; A.uv.array.set(K.uv, k * 4); A.flip.array[k] = 0; k++; };
   for (const s of CITY.signals) {
     const dx = s.x - cam.x, dz = s.z - cam.z; if (dx * dx + dz * dz > 160 * 160) continue;
     // only the side facing the driver shows: the camera must be on the approach side
@@ -352,6 +442,7 @@ function r3FxUpdate() {
     const R = R3.todKind === 'night' ? 170 : 90;
     for (const l of CITY.lamps) { const dx = l.x - cam.x, dz = l.z - cam.z; if (dx * dx + dz * dz < R * R) put('glow_lamp', l.x, l.y, l.z); }
     const C = CAR; if (!CAMV.fp) { const hx = Math.sin(C.yaw), hz = Math.cos(C.yaw), rx_ = Math.cos(C.yaw), rz_ = -Math.sin(C.yaw), fx = C.x + hx * (C.P.L / 2 + 0.1), fz = C.z + hz * (C.P.L / 2 + 0.1); for (const sd of [-1, 1]) put('glow_head', fx + rx_ * sd * C.P.W * 0.34, C.y + 0.6, fz + rz_ * sd * C.P.W * 0.34); }
+    if (PL && G.mode === 'drive') { const hx = Math.sin(C.yaw), hz = Math.cos(C.yaw); lightPut(PL, C.x + hx * 7, C.y + 0.08, C.z + hz * 7, 4.6, [0.5, 0.47, 0.38]); lightPut(PL, C.x + hx * 12, C.y + 0.08, C.z + hz * 12, 3.4, [0.32, 0.3, 0.24]); }
     for (const v of TR.veh) { const dx = v.x - cam.x, dz = v.z - cam.z; if (dx * dx + dz * dz > 140 * 140) continue; const hx = Math.sin(v.yaw), hz = Math.cos(v.yaw); if (dx * hx + dz * hz > 0) continue; const rx_ = Math.cos(v.yaw), rz_ = -Math.sin(v.yaw), fx = v.x + hx * (v.L / 2 + 0.05), fz = v.z + hz * (v.L / 2 + 0.05), w = v.type === 'scooter' ? 0 : v.W * 0.32; if (w) { put('glow_head', fx + rx_ * w, v.y + 0.6, fz + rz_ * w); put('glow_head', fx - rx_ * w, v.y + 0.6, fz - rz_ * w); } else put('glow_head', fx, v.y + 0.6, fz); }
   }
   for (const v of TR.veh) {
@@ -361,6 +452,7 @@ function r3FxUpdate() {
     if (w) { put('glow_red', bx + rx_ * w, y, bz + rz_ * w); put('glow_red', bx - rx_ * w, y, bz - rz_ * w); } else put('glow_red', bx, y, bz);
   }
   m.geometry.instanceCount = k; for (const a of Object.values(A)) a.needsUpdate = true;
+  if (GL) { lightsDone(GL); lightsDone(PL); }
 }
 function r3PeopleUpdate() {
   const m = R3.peopleMesh; if (!m) return; const A = R3.peopleA, cam = R3.cam.position; let k = 0;
@@ -376,18 +468,18 @@ function r3PeopleUpdate() {
 }
 // ---------- the traffic: every vehicle a billboard showing the frame nearest its angle to the camera ----------
 function r3Traffic() {
-  const AW = 2048, atlas = canvas(AW, AW), g = atlas.getContext('2d'), items = [];
+  const AW = STYLE.toon ? 4096 : 2048, AH = 2048, atlas = canvas(AW, AH), g = atlas.getContext('2d'), items = [];
   for (const K of Object.values(TRF.kinds)) K.frames.forEach((f, i) => items.push({ K, i, f }));
-  items.sort((a, b) => b.f.px.h - a.f.px.h);
+  items.sort((a, b) => (b.f.px.ch || b.f.px.h) - (a.f.px.ch || a.f.px.h));
   let x = 0, y = 0, rowH = 0;
-  for (const it of items) { const w = it.f.px.w, h = it.f.px.h; if (x + w + 2 > AW) { x = 0; y += rowH + 2; rowH = 0; } if (y + h + 2 > AW) { reportErr('traffic atlas full'); break; } g.drawImage(it.f.px.toCanvas(), x + 1, y + 1); it.f.uv = [(x + 1) / AW, 1 - (y + 1 + h) / AW, (x + 1 + w) / AW, 1 - (y + 1) / AW]; x += w + 2; rowH = Math.max(rowH, h); }
-  const tex = new THREE.CanvasTexture(atlas); tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.colorSpace = THREE.SRGBColorSpace;
+  for (const it of items) { const w = it.f.px.cw || it.f.px.w, h = it.f.px.ch || it.f.px.h; if (x + w + 2 > AW) { x = 0; y += rowH + 2; rowH = 0; } if (y + h + 2 > AH) { reportErr('traffic atlas full'); break; } g.drawImage(it.f.px.toCanvas(), x + 1, y + 1); it.f.uv = [(x + 1) / AW, 1 - (y + 1 + h) / AH, (x + 1 + w) / AW, 1 - (y + 1) / AH]; x += w + 2; rowH = Math.max(rowH, h); }
+  const tex = new THREE.CanvasTexture(atlas); tex.magFilter = STYLE.toon ? THREE.LinearFilter : THREE.NearestFilter; tex.minFilter = STYLE.toon ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; tex.generateMipmaps = STYLE.toon; tex.colorSpace = THREE.SRGBColorSpace;
   const n = TR.max, pos = new Float32Array(n * 3), size = new Float32Array(n * 2), uv = new Float32Array(n * 4), flip = new Float32Array(n);
   const geo = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); geo.instanceCount = 0;
   const A = { pos: new THREE.InstancedBufferAttribute(pos, 3), size: new THREE.InstancedBufferAttribute(size, 2), uv: new THREE.InstancedBufferAttribute(uv, 4), flip: new THREE.InstancedBufferAttribute(flip, 1) };
   for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('iPos', A.pos); geo.setAttribute('iSize', A.size); geo.setAttribute('iUV', A.uv); geo.setAttribute('iFlip', A.flip);
-  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, ...shadowUni() }, transparent: false });
+  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.trafficMesh = m; R3.trafficA = A;
 }
 function r3TrafficUpdate() {
@@ -411,9 +503,9 @@ function r3CarSet(spec) {
   const at = canvas(cols * fw, rows * fh), g = at.getContext('2d');
   frames.forEach((f, i) => g.drawImage(f, (i % cols) * fw, Math.floor(i / cols) * fh));
   if (R3.car) { R3.scene.remove(R3.car); R3.carTex.dispose(); }
-  const tex = new THREE.CanvasTexture(at); tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.colorSpace = THREE.SRGBColorSpace;
+  const tex = new THREE.CanvasTexture(at); tex.magFilter = STYLE.toon ? THREE.LinearFilter : THREE.NearestFilter; tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.colorSpace = THREE.SRGBColorSpace;
   R3.carTex = tex; R3.carFrames = { cols, rows, fw, fh, N };
-  const ppm = TURN_OPT.ppm, wM = fw / ppm, hM = fh / ppm, gy = TURN_OPT.gy / ppm;
+  const sk = frames[0].__s || 1, ppm = TURN_OPT.ppm * sk, wM = fw / ppm, hM = fh / ppm, gy = TURN_OPT.gy * sk / ppm;
   const geo = new THREE.PlaneGeometry(wM, hM); geo.translate(0, gy - hM / 2 + 0.02, 0);   // the frame's ground line (gy from its top) sits at y = 0
   const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.5, depthWrite: true, fog: false, side: THREE.DoubleSide });
   const m = new THREE.Mesh(geo, mat); scene3Add(m); R3.car = m;
@@ -440,30 +532,41 @@ const QUAD_VS = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(po
 const BLUR_FS = `precision mediump float; uniform sampler2D tex; uniform vec2 dir; varying vec2 vUv;
   void main() { vec4 c = vec4(0.0); float w[5]; w[0]=0.227; w[1]=0.194; w[2]=0.121; w[3]=0.054; w[4]=0.016;
     c += texture2D(tex, vUv) * w[0]; for (int i = 1; i < 5; i++) { c += texture2D(tex, vUv + dir * float(i)) * w[i]; c += texture2D(tex, vUv - dir * float(i)) * w[i]; } gl_FragColor = c; }`;
-const BRIGHT_FS = `precision mediump float; uniform sampler2D tex; varying vec2 vUv; void main() { vec4 c = texture2D(tex, vUv); float l = dot(c.rgb, vec3(0.3, 0.59, 0.11)); gl_FragColor = vec4(c.rgb * smoothstep(0.62, 0.95, l), 1.0); }`;
-const COMP_FS = `precision mediump float; uniform sampler2D tex, blur, bloom, depthTex; uniform float near, far, focus, aspect; uniform vec3 grade; varying vec2 vUv;
+const BRIGHT_FS = `precision mediump float; uniform sampler2D tex; uniform vec2 thr; varying vec2 vUv; void main() { vec4 c = texture2D(tex, vUv); float l = dot(c.rgb, vec3(0.3, 0.59, 0.11)); gl_FragColor = vec4(c.rgb * smoothstep(thr.x, thr.y, l), 1.0); }`;
+const COMP_FS = `precision highp float; uniform sampler2D tex, blur, bloom; uniform highp sampler2D depthTex; uniform float near, far, focus, aspect, bloomK, dofK, sat, inkOn, inkFar, inkK, inkScale, inkThr; uniform vec2 texel; uniform vec3 grade, inkCol; varying vec2 vUv;
   float lin(float d) { float z = d * 2.0 - 1.0; return (2.0 * near * far) / (far + near - z * (far - near)); }
+  float dAt(vec2 o) { return lin(texture2D(depthTex, vUv + o * texel).r); }
   void main() {
     vec4 sharp = texture2D(tex, vUv); vec4 soft = texture2D(blur, vUv); float d = lin(texture2D(depthTex, vUv).r);
     float coc = clamp((d - focus) / (focus * 5.0), 0.0, 1.0) * 0.75 + clamp((focus * 0.5 - d) / (focus * 0.5), 0.0, 1.0) * 0.6;
     float tilt = smoothstep(0.4, 0.5, abs(vUv.y - 0.5));
-    float k = clamp(coc * 0.7 + tilt * 0.3, 0.0, 1.0);
-    vec3 c = mix(sharp.rgb, soft.rgb, k) + texture2D(bloom, vUv).rgb * 0.5;
-    c *= grade; c = mix(vec3(dot(c, vec3(0.3, 0.59, 0.11))), c, 1.18); vec2 q = (vUv - 0.5) * vec2(aspect, 1.0); c *= 1.0 - dot(q, q) * 0.5;
+    float k = clamp(coc * 0.7 + tilt * 0.3, 0.0, 1.0) * dofK;
+    vec3 c = mix(sharp.rgb, soft.rgb, k) + texture2D(bloom, vUv).rgb * bloomK;
+    if (inkOn > 0.5) {
+      // where the depth bends or breaks (a silhouette, a crease) the inverse depth stops being flat: ink there
+      float i0 = 1.0 / d, dl = dAt(vec2(-1.0, 0.0)), dr = dAt(vec2(1.0, 0.0)), du = dAt(vec2(0.0, 1.0)), dd = dAt(vec2(0.0, -1.0));
+      float e = (abs(1.0 / dl + 1.0 / dr - 2.0 * i0) + abs(1.0 / du + 1.0 / dd - 2.0 * i0)) * d;
+      float thr = inkThr * (1.0 + d / inkScale);   // farther off, only the bigger breaks (a decal's offset or a kerb far away is no line)
+      float ink = smoothstep(thr, thr * 3.0, e) * (1.0 - smoothstep(inkFar * 0.45, inkFar, d)) * (1.0 - k * 0.7) * inkK;
+      c = mix(c, inkCol, ink);
+    }
+    c *= grade; c = mix(vec3(dot(c, vec3(0.3, 0.59, 0.11))), c, sat); vec2 q = (vUv - 0.5) * vec2(aspect, 1.0); c *= 1.0 - dot(q, q) * 0.5;
     gl_FragColor = vec4(pow(max(c, 0.0), vec3(1.0 / 2.2)), 1.0); }`;
 function r3Post() {
   const mk = (w, h, depth) => { const rt = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter }); if (depth) { rt.depthTexture = new THREE.DepthTexture(w, h); rt.depthTexture.type = THREE.UnsignedIntType; } return rt; };
   const P = { mk, quad: new THREE.Mesh(new THREE.PlaneGeometry(2, 2)), scene: new THREE.Scene(), cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
   P.scene.add(P.quad);
   P.blur = new THREE.ShaderMaterial({ vertexShader: QUAD_VS, fragmentShader: BLUR_FS, uniforms: { tex: { value: null }, dir: { value: new THREE.Vector2() } }, depthTest: false });
-  P.bright = new THREE.ShaderMaterial({ vertexShader: QUAD_VS, fragmentShader: BRIGHT_FS, uniforms: { tex: { value: null } }, depthTest: false });
-  P.comp = new THREE.ShaderMaterial({ vertexShader: QUAD_VS, fragmentShader: COMP_FS, uniforms: { tex: { value: null }, blur: { value: null }, bloom: { value: null }, depthTex: { value: null }, near: { value: 0.6 }, far: { value: 2600 }, focus: { value: 14 }, aspect: { value: 1.7 }, grade: { value: new THREE.Vector3(1.03, 1.0, 0.96) } }, depthTest: false });
+  P.bright = new THREE.ShaderMaterial({ vertexShader: QUAD_VS, fragmentShader: BRIGHT_FS, uniforms: { tex: { value: null }, thr: { value: new THREE.Vector2(0.62, 0.95) } }, depthTest: false });
+  const toon = STYLE.toon;
+  P.comp = new THREE.ShaderMaterial({ vertexShader: QUAD_VS, fragmentShader: COMP_FS, uniforms: { tex: { value: null }, blur: { value: null }, bloom: { value: null }, depthTex: { value: null }, near: { value: 0.6 }, far: { value: 2600 }, focus: { value: 14 }, aspect: { value: 1.7 }, grade: { value: new THREE.Vector3(1.03, 1.0, 0.96) },
+    bloomK: { value: toon ? 0.32 : 0.5 }, dofK: { value: toon ? 0.45 : 1 }, sat: { value: toon ? 1.08 : 1.18 }, inkOn: { value: toon ? 1 : 0 }, inkFar: { value: 900 }, inkK: { value: 0.9 }, inkScale: { value: 70 }, inkThr: { value: 0.035 }, texel: { value: new THREE.Vector2(1 / 1280, 1 / 720) }, inkCol: { value: new THREE.Color(0x2b2233) } }, depthTest: false });
   R3.post = P; r3PostResize();
 }
 function r3PostResize() {
   const P = R3.post, w = R3.w, h = R3.h; for (const k of ['rt', 'a', 'b', 'ba', 'bb']) if (P[k]) P[k].dispose();
   P.rt = P.mk(w, h, true); P.a = P.mk(w >> 1, h >> 1); P.b = P.mk(w >> 1, h >> 1); P.ba = P.mk(w >> 2, h >> 2); P.bb = P.mk(w >> 2, h >> 2);
-  P.comp.uniforms.aspect.value = w / h;
+  P.comp.uniforms.aspect.value = w / h; P.comp.uniforms.texel.value.set(1 / w, 1 / h);
 }
 function r3Pass(mat, from, to, dir, w, h) { const P = R3.post; mat.uniforms.tex.value = from.texture; if (dir) mat.uniforms.dir.value.set(dir[0] / w, dir[1] / h); P.quad.material = mat; R3.renderer.setRenderTarget(to); R3.renderer.render(P.scene, P.cam); }
 function r3Frame(focusDist) {
@@ -478,7 +581,7 @@ function r3FrameFX(focusDist) {
   const w2 = R3.w >> 1, h2 = R3.h >> 1, w4 = R3.w >> 2, h4 = R3.h >> 2;
   r3Pass(P.blur, P.rt, P.a, [1.0, 0], w2, h2); r3Pass(P.blur, P.a, P.b, [0, 1.0], w2, h2); r3Pass(P.blur, P.b, P.a, [1.6, 0], w2, h2); r3Pass(P.blur, P.a, P.b, [0, 1.6], w2, h2);
   r3Pass(P.bright, P.rt, P.ba, null, w4, h4); r3Pass(P.blur, P.ba, P.bb, [2, 0], w4, h4); r3Pass(P.blur, P.bb, P.ba, [0, 2], w4, h4); r3Pass(P.blur, P.ba, P.bb, [3, 0], w4, h4); r3Pass(P.blur, P.bb, P.ba, [0, 3], w4, h4);
-  const u = P.comp.uniforms; u.tex.value = P.rt.texture; u.blur.value = P.b.texture; u.bloom.value = P.ba.texture; u.depthTex.value = P.rt.depthTexture; u.focus.value = focusDist; u.near.value = R3.cam.near; u.far.value = R3.cam.far;
+  const u = P.comp.uniforms; if (G.mode === 'drive') { u.inkFar.value = 900; u.inkScale.value = 70; u.inkThr.value = 0.035; } else { u.inkFar.value = Math.max(900, AERIAL.dist * 2.2); u.inkScale.value = AERIAL.dist * 6; u.inkThr.value = 0.011; } u.tex.value = P.rt.texture; u.blur.value = P.b.texture; u.bloom.value = P.ba.texture; u.depthTex.value = P.rt.depthTexture; u.focus.value = focusDist; u.near.value = R3.cam.near; u.far.value = R3.cam.far;
   P.quad.material = P.comp; rd.setRenderTarget(null); rd.render(P.scene, P.cam);
 }
 // ---------- per frame: the car's picture, the shadow, the camera ----------

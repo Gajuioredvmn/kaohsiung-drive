@@ -485,38 +485,40 @@ function tunnelCuts(c, rd, r, k) {
   for (let s = 0; s <= L; s += 2.5) { if (tunnelH(rd, s) <= TUN_COVER) continue; const p = polyAt(rd.pts, s); c.moveTo((p.x + r) * k, p.z * k); c.arc(p.x * k, p.z * k, r * k, 0, TAU); }
   c.fill();
 }
+const GPAL_PX = { grassA: 0x6e9a46, grassB: 0x92b858, hillA: 0x3e6e2c, hillB: 0x6a9a44, fields: [0x8cc050, 0x9ccc48, 0xb4a86a, 0x78b23e, 0xa8c860], track: 0xa89a76, high: 0x56704a, city: '#9e9a92', bank: '#88a860', park: '#5e9a40', water: '#2c78ac', qijin: '#b4ac9c', sand: '#e4d4a4', river: '#3a84b4', walk: '#cfcac0', road: '#585860', road2: '#4e4e56', deck: '#6a6a72', cut: '#9a968e', hill0: '#6a8e3e', hill1: '#3f6c2a', hill2: '#4e7e34', rural: ['#9ccc48', '#86b848', '#b8a86a'] };
+const GPAL_TOON = { grassA: 0x6eab4e, grassB: 0x8cc35c, hillA: 0x3f7a3a, hillB: 0x64a04c, fields: [0x9ccf55, 0xaad45c, 0xc9b878, 0x86c04c, 0xb4d468], track: 0xc2b088, high: 0x4f7a48, city: '#cbc2b0', bank: '#9cc27a', park: '#6db35a', water: '#3f86b8', qijin: '#d0c4a8', sand: '#ecd9a6', river: '#3a7eb4', walk: '#d6cdbd', road: '#62657a', road2: '#5a5d72', deck: '#74778a', cut: '#b2aca0', hill0: '#6fa448', hill1: '#3f7a3a', hill2: '#55904a', rural: ['#a8d45c', '#90c450', '#c9b878'] };
 function paintGround() {
-  const W = MAP.W, px = MAP.px, N = Math.round(W / px), g = canvas(N, N).getContext('2d'), k = 1 / px;
+  const W = MAP.W, px = MAP.px, N = Math.round(W / px), g = canvas(N, N).getContext('2d'), k = 1 / px, Q = STYLE.toon ? GPAL_TOON : GPAL_PX;
   // the grass and the hill's forest, painted coarsely (three metres a pixel) and scaled up
   const M = N >> 1, gc = canvas(M, M).getContext('2d'), im = gc.createImageData(M, M), d = im.data, p2 = px * 2;
   for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
     const wx = x * p2, wz = y * p2, h = terrainH(wx, wz), n = vnoise2(x * 0.06, y * 0.06) * 0.6 + vnoise2(x * 0.26, y * 0.26) * 0.4, i = (y * M + x) * 4;
-    let c = h > 6 ? mixHex(0x3e6e2c, 0x6a9a44, n) : mixHex(0x6e9a46, 0x92b858, n);
+    let c = h > 6 ? mixHex(Q.hillA, Q.hillB, n) : mixHex(Q.grassA, Q.grassB, n);
     // the plain outside the city: paddies and orchards in strips, a dirt track between
-    if (h < 4 && !inCores(wx, wz, 0)) { const fx = Math.floor(wx / 76 + n * 0.3), fz = Math.floor(wz / 118), k = ((fx * 7 + fz * 13) % 5 + 5) % 5; c = mixHex([0x8cc050, 0x9ccc48, 0xb4a86a, 0x78b23e, 0xa8c860][k], c, 0.35); if ((wx % 76) < 5 || (wz % 118) < 5) c = 0xa89a76; }
-    if (h > 40) c = mixHex(c, 0x56704a, clamp((h - 40) / 60, 0, 0.6));
+    if (h < 4 && !inCores(wx, wz, 0)) { const fx = Math.floor(wx / 76 + n * 0.3), fz = Math.floor(wz / 118), k = ((fx * 7 + fz * 13) % 5 + 5) % 5; c = mixHex(Q.fields[k], c, 0.35); if ((wx % 76) < 5 || (wz % 118) < 5) c = Q.track; }
+    if (h > 40) c = mixHex(c, Q.high, clamp((h - 40) / 60, 0, 0.6));
     d[i] = c >> 16; d[i + 1] = (c >> 8) & 255; d[i + 2] = c & 255; d[i + 3] = 255;
   }
   gc.putImageData(im, 0, 0); g.imageSmoothingEnabled = true; g.drawImage(gc.canvas, 0, 0, N, N);
   // the city's yards, except where the hill rises through the core
-  g.fillStyle = '#a8a49c'; for (const C of MAP.cores) g.fillRect(C.x0 * k, C.z0 * k, (C.x1 - C.x0) * k, (C.z1 - C.z0) * k);
-  for (const H of HILLS) { const gr = g.createRadialGradient(H.x * k, H.z * k, 0, H.x * k, H.z * k, Math.max(H.rx, H.rz) * 0.834 * k); gr.addColorStop(0, '#6a8e3e'); gr.addColorStop(0.5, '#3f6c2a'); gr.addColorStop(1, '#4e7e34'); g.fillStyle = gr; g.beginPath(); g.ellipse(H.x * k, H.z * k, H.rx * 0.834 * k, H.rz * 0.834 * k, 0, 0, TAU); g.fill();
+  g.fillStyle = STYLE.toon ? '#cbc2b0' : '#a8a49c'; for (const C of MAP.cores) g.fillRect(C.x0 * k, C.z0 * k, (C.x1 - C.x0) * k, (C.z1 - C.z0) * k);
+  for (const H of HILLS) { const gr = g.createRadialGradient(H.x * k, H.z * k, 0, H.x * k, H.z * k, Math.max(H.rx, H.rz) * 0.834 * k); gr.addColorStop(0, Q.hill0); gr.addColorStop(0.5, Q.hill1); gr.addColorStop(1, Q.hill2); g.fillStyle = gr; g.beginPath(); g.ellipse(H.x * k, H.z * k, H.rx * 0.834 * k, H.rz * 0.834 * k, 0, 0, TAU); g.fill();
     // the forest canopy as a scatter of darker and lighter blotches
     const rr = mulberry(H.x | 0), n = (H.rx * H.rz * k * k / 9) | 0; for (let i = 0; i < n; i++) { const a = rr() * TAU, d = Math.sqrt(rr()) * 0.83, x = H.x + Math.cos(a) * d * H.rx, z = H.z + Math.sin(a) * d * H.rz; g.fillStyle = rr() < 0.5 ? 'rgba(30,70,25,.45)' : 'rgba(120,160,70,.35)'; g.beginPath(); g.arc(x * k, z * k, (1 + rr() * 2.5), 0, TAU); g.fill(); } }
   // the fields and factories outside: paddies in strips, the industrial yards grey
-  for (const f of MAP.faces) if (f.kind === 'rural' && f.kerb) { g.fillStyle = ((f.cx + f.cz) / 120 | 0) % 3 === 0 ? '#9ccc48' : ((f.cx * 7 + f.cz) / 160 | 0) % 2 ? '#86b848' : '#b8a86a'; polyPath(g, f.kerb, k); g.fill(); }
-  for (const f of MAP.faces) if (f.kind === 'city' || f.kind === 'bank') { g.fillStyle = f.kind === 'city' ? '#9e9a92' : '#88a860'; polyPath(g, f.kerb, k); g.fill(); }
-  for (const p of MAP.parks) { g.fillStyle = '#5e9a40'; polyPath(g, p, k); g.fill(); }
-  for (const p of MAP.water) { g.fillStyle = '#2c78ac'; polyPath(g, p, k); g.fill(); }
-  g.fillStyle = '#b4ac9c'; polyPath(g, MAP.qijin, k); g.fill();
-  for (const p of MAP.sand) { g.fillStyle = '#e4d4a4'; polyPath(g, p, k); g.fill(); }
-  g.strokeStyle = '#3a84b4'; strokePts(g, MAP.river, 44, k); strokePts(g, MAP.river2, 26, k);
+  for (const f of MAP.faces) if (f.kind === 'rural' && f.kerb) { g.fillStyle = Q.rural[((f.cx + f.cz) / 120 | 0) % 3 === 0 ? 0 : ((f.cx * 7 + f.cz) / 160 | 0) % 2 ? 1 : 2]; polyPath(g, f.kerb, k); g.fill(); }
+  for (const f of MAP.faces) if (f.kind === 'city' || f.kind === 'bank') { g.fillStyle = f.kind === 'city' ? Q.city : Q.bank; polyPath(g, f.kerb, k); g.fill(); }
+  for (const p of MAP.parks) { g.fillStyle = Q.park; polyPath(g, p, k); g.fill(); }
+  for (const p of MAP.water) { g.fillStyle = Q.water; polyPath(g, p, k); g.fill(); }
+  g.fillStyle = Q.qijin; polyPath(g, MAP.qijin, k); g.fill();
+  for (const p of MAP.sand) { g.fillStyle = Q.sand; polyPath(g, p, k); g.fill(); }
+  g.strokeStyle = Q.river; strokePts(g, MAP.river, 44, k); strokePts(g, MAP.river2, 26, k);
   // the roads: pavement band, then the asphalt
-  for (const e of MAP.edges) if (!e.lvl && !e.ramp && e.K.sw) { g.strokeStyle = '#cfcac0'; strokePts(g, e.pts, e.w + e.K.sw * 2, k); }
-  for (const e of MAP.edges) if (!e.lvl && !e.ramp && !e.tunnel) { g.strokeStyle = e.K.cls >= 2 ? '#4e4e56' : '#585860'; strokePts(g, e.pts, e.w, k); }
-  for (const e of MAP.edges) if (e.lvl || e.ramp) { g.strokeStyle = '#6a6a72'; strokePts(g, e.pts, e.w, k); }
+  for (const e of MAP.edges) if (!e.lvl && !e.ramp && e.K.sw) { g.strokeStyle = Q.walk; strokePts(g, e.pts, e.w + e.K.sw * 2, k); }
+  for (const e of MAP.edges) if (!e.lvl && !e.ramp && !e.tunnel) { g.strokeStyle = e.K.cls >= 2 ? Q.road2 : Q.road; strokePts(g, e.pts, e.w, k); }
+  for (const e of MAP.edges) if (e.lvl || e.ramp) { g.strokeStyle = Q.deck; strokePts(g, e.pts, e.w, k); }
   // the open cuts: the concrete of the trench, then the asphalt of the ramps
-  for (const rd of MAP.roads) if (rd.tunnel) { g.fillStyle = '#9a968e'; tunnelCuts(g, rd, rd.w / 2 + 9, k); g.fillStyle = '#585860'; tunnelCuts(g, rd, rd.w / 2 + 0.6, k); }
+  for (const rd of MAP.roads) if (rd.tunnel) { g.fillStyle = Q.cut; tunnelCuts(g, rd, rd.w / 2 + 9, k); g.fillStyle = Q.road; tunnelCuts(g, rd, rd.w / 2 + 0.6, k); }
   MAP.ground = g.canvas;
 }
 function groundKind(x, z) { const W = MAP.kindW, i = Math.floor(z / KS), j = Math.floor(x / KS); if (i < 0 || j < 0 || i >= W || j >= W) return GK.grass; return MAP.kind[i * W + j]; }

@@ -1,6 +1,6 @@
 // ===================== the game: boot, the loop, the HUD =====================
 const G = { mode: 'title', paused: false, t: 0, speed: 1, halt: false, bootMs: null, fps: 60 };
-const SET = Object.assign({ quality: 'high', ctrl: 'tilt', auto: true, sfx: 0.9, music: 0.5, sens: 22, police: false, jobs: true, tod: 'day' }, (() => { try { return JSON.parse(localStorage.getItem('kh.settings') || '{}'); } catch (e) { return {}; } })());
+const SET = Object.assign({ quality: 'high', ctrl: 'tilt', auto: true, sfx: 0.9, music: 0.5, sens: 22, police: false, jobs: true, tod: 'day', style: 'toon' }, (() => { try { return JSON.parse(localStorage.getItem('kh.settings') || '{}'); } catch (e) { return {}; } })());
 function saveSettings() { try { localStorage.setItem('kh.settings', JSON.stringify(SET)); } catch (e) { /* no storage */ } }
 const hudCanvas = $('hud'), hud = hudCanvas.getContext('2d');
 // anything that goes wrong is written on the screen, so a phone can tell us what happened
@@ -14,6 +14,7 @@ addEventListener('resize', hudResize);
 // ---------- boot ----------
 function boot() {
   const t0 = performance.now();
+  STYLE.toon = SET.style !== 'hd2d' && !/hd2d/.test(location.hash);
   paintProps(); buildMap();
   const t1 = performance.now(); atlasPaint(); paintTrafficKinds();
   const t2 = performance.now(); buildCity(); buildLanes(); buildWalkways();
@@ -47,9 +48,17 @@ function frame(now) {
   requestAnimationFrame(frame);
   if (G.halt) return;
   let dt = Math.min(0.05, (now - lastT) / 1000); lastT = now; dt *= G.speed;
-  fpsAcc += dt; fpsN++; if (fpsAcc > 0.5) { G.fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; }
+  fpsAcc += dt; fpsN++; if (fpsAcc > 0.5) { G.fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; dynRes(); }
   tick(dt);
   render(dt);
+}
+// the illustrated style draws near the screen's own sharpness, and gives some of it back when the frame rate sags
+function dynRes() {
+  if (!STYLE.toon || !R3.renderer || document.hidden) return;
+  const D = (G.dynS = G.dynS || { low: 0, high: 0 }); R3.dyn = R3.dyn || 1;
+  if (G.fps < 44) { D.high = 0; if (++D.low >= 2 && R3.dyn > 0.5) { R3.dyn = Math.max(0.5, R3.dyn * 0.86); D.low = 0; r3Resize(); } }
+  else if (G.fps > 56) { D.low = 0; if (++D.high >= 8 && R3.dyn < 1) { R3.dyn = Math.min(1, R3.dyn * 1.08); D.high = 0; r3Resize(); } }
+  else { D.low = 0; D.high = 0; }
 }
 // the city carries on under the aerial views: the traffic and people live round the spot the camera looks at
 function aerialTick(dt) {

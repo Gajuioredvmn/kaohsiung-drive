@@ -8,7 +8,7 @@ function uiInit() {
   const root = $('ui');
   root.innerHTML = `
   <section class="scr" id="s-title">
-    <div class="title-wrap"><div class="logo"><span class="logo-tc">港都漫遊</span><span class="logo-en">KAOHSIUNG DRIVE</span><span class="logo-yr">高雄・開放世界　HD-2D</span></div>
+    <div class="title-wrap"><div class="logo"><span class="logo-tc">港都漫遊</span><span class="logo-en">KAOHSIUNG DRIVE</span><span class="logo-yr">高雄・開放世界　${STYLE.toon ? '插畫風' : 'HD-2D'}</span></div>
       <div class="tap" id="tap">點一下開始　TAP TO START</div>
       <div class="menu" id="menu" hidden><button class="btn big" data-go="select">選車出發</button><button class="btn" data-act="god">俯瞰高雄</button><button class="btn" data-go="settings">設定</button></div></div>
     <div class="foot">左右傾斜手機轉向・右手油門煞車・畫面上方左右拖曳轉鏡頭</div>
@@ -75,13 +75,13 @@ function openSelect() {
 function turnLoop() {
   UI.turnRaf = 0; if (UI.scr !== 'select') return; UI.turnRaf = requestAnimationFrame(turnLoop);
   const spec = CARS[UI.sel], cv = $('turn'), g2 = cv.getContext('2d'); UI.turnT += 1 / 60; const t = UI.turnT;
-  g2.imageSmoothingEnabled = false; g2.clearRect(0, 0, cv.width, cv.height);
+  g2.imageSmoothingEnabled = !!STYLE.toon; g2.clearRect(0, 0, cv.width, cv.height);
   const W = cv.width, H = cv.height, fy = H - 30, tx = W / 2, ty = fy + 4;
   g2.fillStyle = 'rgba(10,6,24,.55)'; g2.fillRect(0, fy, W, H - fy);
   g2.fillStyle = 'rgba(40,30,70,.9)'; g2.beginPath(); g2.ellipse(tx, ty, 150, 20, 0, 0, TAU); g2.fill();
   for (let k = 0; k < 24; k++) { const a = (k / 24) * TAU + t * 1.2, lit = (k + Math.floor(t * 6)) % 3 === 0; g2.fillStyle = lit ? '#ffd23a' : '#5a4a8a'; g2.fillRect(Math.round(tx + Math.cos(a) * 150) - 2, Math.round(ty + Math.sin(a) * 20) - 2, 4, 4); }
   const yaw = (t * (TAU / 8) + 0.55) % TAU, fi = Math.round((yaw / TAU) * TURN_N) % TURN_N, img = carTurnFrame(spec, fi);
-  const k = 1.45, w = img.width * k, hgt = img.height * k, x = tx - w / 2, y = fy - TURN_OPT.gy * k;
+  const k = 1.45, ks = k / (img.__s || 1), w = img.width * ks, hgt = img.height * ks, x = tx - w / 2, y = fy - TURN_OPT.gy * k;
   g2.save(); g2.beginPath(); g2.rect(0, fy, W, H - fy); g2.clip(); g2.globalAlpha = 0.2; g2.translate(0, fy * 2 + 2); g2.scale(1, -1); g2.drawImage(img, x, y, w, hgt); g2.restore();
   g2.fillStyle = 'rgba(0,0,0,.35)'; g2.beginPath(); g2.ellipse(tx, fy + 2, w * 0.3, 6, 0, 0, TAU); g2.fill();
   g2.drawImage(img, x, y, w, hgt);
@@ -91,15 +91,16 @@ function openSettings() {
   $('settings').innerHTML = `<h2 class="ttl">設定</h2>
     <div class="row"><span class="lbl">方向盤</span><div class="seg" id="seg-ctrl"><button class="btn" data-v="tilt">陀螺儀</button><button class="btn" data-v="touch">觸控滑桿</button></div></div>
     <div class="row"><span class="lbl">變速箱</span><div class="seg" id="seg-auto"><button class="btn" data-v="1">AT 自排</button><button class="btn" data-v="0">MT 手排</button></div></div>
-    <div class="row"><span class="lbl">畫質</span><div class="seg" id="seg-q"><button class="btn" data-v="high">高（景深、泛光）</button><button class="btn" data-v="low">省電</button><button class="btn" data-v="off">不要後製</button></div></div>
+    <div class="row"><span class="lbl">畫風</span><div class="seg" id="seg-style"><button class="btn" data-v="toon">插畫（描線）</button><button class="btn" data-v="hd2d">像素 HD-2D</button></div></div>
+    <div class="row"><span class="lbl">畫質</span><div class="seg" id="seg-q"><button class="btn" data-v="high">${STYLE.toon ? '高（清晰、泛光）' : '高（景深、泛光）'}</button><button class="btn" data-v="low">省電</button><button class="btn" data-v="off">不要後製</button></div></div>
     <div class="row"><span class="lbl">任務招牌</span><div class="seg" id="seg-jobs"><button class="btn" data-v="1">顯示</button><button class="btn" data-v="0">關閉（純閒晃）</button></div></div>
     <div class="row"><span class="lbl">時間</span><div class="seg" id="seg-tod"><button class="btn" data-v="day">白天</button><button class="btn" data-v="dusk">傍晚</button><button class="btn" data-v="night">夜晚</button></div></div>
     <div class="row"><span class="lbl">警察</span><div class="seg" id="seg-police"><button class="btn" data-v="1">會來抓</button><button class="btn" data-v="0">不管你</button></div></div>
     <div class="row"><span class="lbl">轉向靈敏</span><div><input class="rng" type="range" min="10" max="40" step="1" value="${SET.sens}" id="rng-sens"><div class="note">傾斜 <span id="v-sens">${SET.sens}</span>° 打滿</div></div></div>
     <div class="actions"><button class="btn" data-act="back">完成</button></div>`;
-  const mark = () => { for (const [id, key] of [['seg-ctrl', 'ctrl'], ['seg-auto', 'auto'], ['seg-q', 'quality'], ['seg-jobs', 'jobs'], ['seg-police', 'police'], ['seg-tod', 'tod']]) for (const b of document.querySelectorAll('#' + id + ' .btn')) b.setAttribute('aria-pressed', String(b.dataset.v) === String(key === 'auto' || key === 'jobs' || key === 'police' ? (SET[key] ? 1 : 0) : SET[key]) ? 'true' : 'false'); };
+  const mark = () => { for (const [id, key] of [['seg-ctrl', 'ctrl'], ['seg-auto', 'auto'], ['seg-q', 'quality'], ['seg-jobs', 'jobs'], ['seg-police', 'police'], ['seg-tod', 'tod'], ['seg-style', 'style']]) for (const b of document.querySelectorAll('#' + id + ' .btn')) b.setAttribute('aria-pressed', String(b.dataset.v) === String(key === 'auto' || key === 'jobs' || key === 'police' ? (SET[key] ? 1 : 0) : SET[key]) ? 'true' : 'false'); };
   mark();
-  $('settings').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'back') { show(G.mode === 'drive' ? 'pause' : 'title'); return; } const seg = b.parentElement.id; if (seg === 'seg-ctrl') SET.ctrl = b.dataset.v; if (seg === 'seg-auto') { SET.auto = b.dataset.v === '1'; CAR.auto = SET.auto; } if (seg === 'seg-q') { SET.quality = b.dataset.v; r3Resize(); } if (seg === 'seg-jobs') SET.jobs = b.dataset.v === '1'; if (seg === 'seg-police') SET.police = b.dataset.v === '1'; if (seg === 'seg-tod') { SET.tod = b.dataset.v; if (typeof setTod === 'function') setTod(SET.tod); } saveSettings(); mark(); CTL.mode = SET.ctrl === 'tilt' && CTL.tilt.ok ? 'tilt' : 'touch'; layoutPads(); };
+  $('settings').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'back') { show(G.mode === 'drive' ? 'pause' : 'title'); return; } const seg = b.parentElement.id; if (seg === 'seg-ctrl') SET.ctrl = b.dataset.v; if (seg === 'seg-auto') { SET.auto = b.dataset.v === '1'; CAR.auto = SET.auto; } if (seg === 'seg-q') { SET.quality = b.dataset.v; r3Resize(); } if (seg === 'seg-jobs') SET.jobs = b.dataset.v === '1'; if (seg === 'seg-police') SET.police = b.dataset.v === '1'; if (seg === 'seg-tod') { SET.tod = b.dataset.v; if (typeof setTod === 'function') setTod(SET.tod); } if (seg === 'seg-style' && b.dataset.v !== SET.style) { SET.style = b.dataset.v; saveSettings(); $('settings').innerHTML = '<h2 class="ttl">換畫風中…</h2><p class="note">整座城市要重新畫一次，請稍等幾秒。</p>'; setTimeout(() => location.reload(), 60); return; } saveSettings(); mark(); CTL.mode = SET.ctrl === 'tilt' && CTL.tilt.ok ? 'tilt' : 'touch'; layoutPads(); };
   $('rng-sens').oninput = (e) => { SET.sens = +e.target.value; CTL.sens = SET.sens; $('v-sens').textContent = SET.sens; saveSettings(); };
 }
 // the Android app's back button
