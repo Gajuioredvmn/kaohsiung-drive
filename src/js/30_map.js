@@ -523,13 +523,27 @@ function paintGround() {
 }
 function groundKind(x, z) { const W = MAP.kindW, i = Math.floor(z / KS), j = Math.floor(x / KS); if (i < 0 || j < 0 || i >= W || j >= W) return GK.grass; return MAP.kind[i * W + j]; }
 // ---------- heights ----------
+// the distance to the nearest river (exact within RIVQ.pad metres; beyond that, only known to be farther). Every vehicle and
+// walker asks it each frame through the terrain, so the river's segments are bucketed by 64 m cells, each cell keeping
+// the segments that come within pad of it
+const RIVQ = { cs: 64, pad: 64, cells: null, n: 0 };
 function riverDist(x, z) {
-  let best = 1e9;
-  for (const R of [MAP.river, MAP.river2]) if (R) for (let i = 0; i + 1 < R.length; i++) {
-    const [ax, az] = R[i], [bx, bz] = R[i + 1], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1, t = clamp(((x - ax) * dx + (z - az) * dz) / L2, 0, 1);
-    const d = Math.hypot(x - ax - dx * t, z - az - dz * t); if (d < best) best = d;
+  const Q = RIVQ, R0 = MAP.river, R1 = MAP.river2, n = (R0 ? R0.length : 0) + (R1 ? R1.length : 0);
+  if (!Q.cells || Q.n !== n) {
+    Q.cells = new Map(); Q.n = n;
+    for (const R of [R0, R1]) if (R) for (let i = 0; i + 1 < R.length; i++) {
+      const ax = R[i][0], az = R[i][1], bx = R[i + 1][0], bz = R[i + 1][1];
+      const x0 = Math.floor((Math.min(ax, bx) - Q.pad) / Q.cs), x1 = Math.floor((Math.max(ax, bx) + Q.pad) / Q.cs), z0 = Math.floor((Math.min(az, bz) - Q.pad) / Q.cs), z1 = Math.floor((Math.max(az, bz) + Q.pad) / Q.cs);
+      for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) { const k = cx * 65536 + cz; let a = Q.cells.get(k); if (!a) Q.cells.set(k, (a = [])); a.push(ax, az, bx, bz); }
+    }
   }
-  return best;
+  const a = Q.cells.get(Math.floor(x / Q.cs) * 65536 + Math.floor(z / Q.cs)); if (!a) return 1e9;
+  let best = 1e9;
+  for (let i = 0; i < a.length; i += 4) {
+    const ax = a[i], az = a[i + 1], dx = a[i + 2] - ax, dz = a[i + 3] - az, L2 = dx * dx + dz * dz || 1, t = clamp(((x - ax) * dx + (z - az) * dz) / L2, 0, 1);
+    const ex = x - ax - dx * t, ez = z - az - dz * t, d2 = ex * ex + ez * ez; if (d2 < best) best = d2;
+  }
+  return best < 1e9 ? Math.sqrt(best) : 1e9;
 }
 // the land: 柴山 in the north-west, 旗後山 at 旗津's tip, the river sunk into its channel, flat city everywhere else
 function terrainH(x, z) {

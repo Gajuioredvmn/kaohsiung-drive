@@ -92,7 +92,8 @@ function tick(dt) {
   controlsUpdate(dt);
   const n = Math.max(1, Math.ceil(dt / (1 / 240))), h = dt / n;
   for (let i = 0; i < n; i++) carStep(h);
-  trafficTick(dt); peopleTick(dt); if (SET.jobs) missionsTick(dt); else if (MIS.active || MIS.avail.length) { MIS.active = null; MIS.avail.length = 0; } wantedTick(dt);
+  { const t0 = performance.now(); trafficTick(dt); const t1 = performance.now(); peopleTick(dt); const t2 = performance.now(); TR.stats.ms = lerp(TR.stats.ms || 0, t1 - t0, 0.05); PEO.stats.ms = lerp(PEO.stats.ms || 0, t2 - t1, 0.05); }
+  if (SET.jobs) missionsTick(dt); else if (MIS.active || MIS.avail.length) { MIS.active = null; MIS.avail.length = 0; } wantedTick(dt);
   if (CAR.crashT > 0) CAR.crashT -= dt;
   if (CAR.slipK > 1.05 && Math.abs(CAR.vx) > 3 && Math.random() < 0.6) { r3AddMark(CAR.x - Math.sin(CAR.yaw) * CAR.P.b, CAR.z - Math.cos(CAR.yaw) * CAR.P.b, CAR.yaw, 1); r3AddMark(CAR.x - Math.sin(CAR.yaw) * CAR.P.b, CAR.z - Math.cos(CAR.yaw) * CAR.P.b, CAR.yaw, -1); }
   camUpdate(dt); signalsUpdate();

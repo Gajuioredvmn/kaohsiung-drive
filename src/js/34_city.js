@@ -162,6 +162,17 @@ function buildMedian(e, c) {
   while (t < d1 - 6) { const p = polyAt(pts, t), y = S.ys[Math.min(S.ys.length - 1, p.i)] + 0.18; if (r() < 0.6) addProp(r() < 0.5 ? 'palm' + r.int(0, 1) : 'tree' + r.int(0, 2), p.x, p.z, { s: 0.8 + r() * 0.4, y }); else lampPost(p.x, p.z, p.yaw, true, y); t += 14 + r() * 8; }
   if (e.rd.tram) buildTram(e, c, off);
 }
+// polyAt for the paths walked every frame (lanes, joins, pavements): their running lengths summed once on the path,
+// then a binary search; the answer is a scratch object, to be read at once
+const _pa = { x: 0, z: 0, yaw: 0, i: 0 };
+function pathAt(P, s) {
+  const pts = P.pts, n = pts.length; let c = P.cum;
+  if (!c || c.length !== n) { c = P.cum = new Float64Array(n); for (let i = 1; i < n; i++) { const dx = pts[i][0] - pts[i - 1][0], dz = pts[i][1] - pts[i - 1][1]; c[i] = c[i - 1] + Math.sqrt(dx * dx + dz * dz); } }
+  if (n < 2 || s > c[n - 1] + 1e-6) { const p = pts[n - 1]; _pa.x = p[0]; _pa.z = p[1]; _pa.yaw = 0; _pa.i = n - 1; return _pa; }
+  let lo = 0, hi = n - 2; while (lo < hi) { const m = (lo + hi) >> 1; if (c[m + 1] >= s) hi = m; else lo = m + 1; }
+  const a = pts[lo], b = pts[lo + 1], L = c[lo + 1] - c[lo], t = L > 0 ? (s - c[lo]) / L : 0, dx = b[0] - a[0], dz = b[1] - a[1];
+  _pa.x = a[0] + dx * t; _pa.z = a[1] + dz * t; _pa.yaw = Math.atan2(dx, dz); _pa.i = lo; return _pa;
+}
 function polyAt(pts, s) { let acc = 0; for (let i = 0; i + 1 < pts.length; i++) { const L = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); if (acc + L >= s) { const t = (s - acc) / L; return { x: pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, z: pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t, yaw: Math.atan2(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]), i }; } acc += L; } const p = pts[pts.length - 1]; return { x: p[0], z: p[1], yaw: 0, i: pts.length - 1 }; }
 function buildTram(e, c, off) {
   const S = e.strip, pts = S.pts, steel = T('steel');

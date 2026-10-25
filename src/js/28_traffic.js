@@ -3,7 +3,13 @@
 // lanes by a curve (straight on, right, left). Vehicles follow their lane at a distance s, keep their gap with the
 // IDM car-following law, stop at red lights, give way when turning left and when entering a junction that is in
 // use, and treat the player as one more car ahead. They are spawned and retired around the player.
-const TR = { lanes: [], conns: [], veh: [], max: 340, near: 430, far: 600, spawnT: 0, byEdge: new Map(), stats: {} };
+// near: how far round the car vehicles are spawned; seen: how far off one may appear in view (it fades in there);
+// dens: how many to a metre of lane at most, by the road's class (lanes, streets, avenues, boulevards)
+// dens: how many to a metre of lane at most, and cw: how much of the traffic each class draws, by the road's class
+// (lanes, streets, avenues, boulevards): the big roads carry most of it, the way they do in town
+// dense: how many may be within 150 m of the car before the ones out of sight are thinned (a parked car would otherwise
+// gather a jam round it: whatever drives off is replaced, whatever stays near stays)
+const TR = { lanes: [], conns: [], veh: [], max: 340, near: 320, far: 420, seen: 130, dense: 90, dens: [1 / 120, 1 / 55, 1 / 36, 1 / 26], cw: [0.35, 0.8, 1.6, 2.6], spawnT: 0, byEdge: new Map(), stats: {}, cand: null };
 const LANE_V = { boulevard: 14, avenue: 12.5, street: 10, lane: 7, highway: 24, ramp: 10, quay: 10, hill: 8, rural: 9 };
 function offsetPts(pts, off) {   // the polyline moved to the right of travel by off metres (mitred)
   const o = polyOffsets(pts, Math.abs(off)); return off >= 0 ? o.R : o.L;
@@ -68,7 +74,7 @@ const KIND_W = { car: 1.8, truck: 1.9, bus: 2.5, scooter: 0.8 };
 function pickKind(r, lane) {
   const cls = lane.e.K.cls, u = r();
   if (lane.e.kind === 'highway') return u < 0.6 ? 'sedan' + r.int(0, 7) : u < 0.7 ? 'taxi' : u < 0.8 ? 'blue' + r.int(0, 2) : u < 0.9 ? 'bus' + r.int(0, 2) : u < 0.95 ? 'gravel' : 'suv' + r.int(0, 2);
-  if (cls >= 2) return u < 0.3 ? 'scooter' + r.int(0, 7) : u < 0.62 ? 'sedan' + r.int(0, 7) : u < 0.72 ? 'taxi' : u < 0.8 ? 'blue' + r.int(0, 2) : u < 0.87 ? 'bus' + r.int(0, 2) : u < 0.92 ? 'suv' + r.int(0, 2) : u < 0.97 ? 'wagon' + r.int(0, 1) : 'pickup' + r.int(0, 1);
+  if (cls >= 2) return u < 0.4 ? 'scooter' + r.int(0, 7) : u < 0.66 ? 'sedan' + r.int(0, 7) : u < 0.75 ? 'taxi' : u < 0.82 ? 'blue' + r.int(0, 2) : u < 0.88 ? 'bus' + r.int(0, 2) : u < 0.93 ? 'suv' + r.int(0, 2) : u < 0.97 ? 'wagon' + r.int(0, 1) : 'pickup' + r.int(0, 1);
   return u < 0.5 ? 'scooter' + r.int(0, 7) : u < 0.8 ? 'sedan' + r.int(0, 7) : u < 0.88 ? 'blue' + r.int(0, 2) : u < 0.94 ? 'wagon' + r.int(0, 1) : 'pickup' + r.int(0, 1);
 }
 function spawnVehicle(lane, s, r) {
@@ -80,10 +86,12 @@ function spawnVehicle(lane, s, r) {
   lane.veh.push(v); TR.veh.push(v); vehPose(v); return v;
 }
 function vehPose(v) {
-  const path = v.conn || v.lane, p = polyAt(path.pts, v.s);
+  const path = v.conn || v.lane, p = pathAt(path, v.s);
   // scooters keep to the kerb side of their lane
   const rx_ = Math.cos(p.yaw), rz_ = -Math.sin(p.yaw), side = v.side * (path.laneW ? (path.laneW / 2 - 0.6) : 0.8);
-  v.x = p.x + rx_ * side; v.z = p.z + rz_ * side; v.yaw = p.yaw; const e = v.lane.e; v.y = groundH(v.x, v.z, e.tunnel ? tunnelH(e.rd, e.s0 + Math.min(v.s, e.len)) : e.h0 != null ? e.h0 : 0);
+  v.x = p.x + rx_ * side; v.z = p.z + rz_ * side; v.yaw = p.yaw;
+  // the ground under it, looked up again only once it has gone a metre or changed path (the terrain asks a lot)
+  if (v.gp !== path || Math.abs(v.x - v.gx) + Math.abs(v.z - v.gz) > 1) { const e = v.lane.e; v.y = groundH(v.x, v.z, e.tunnel ? tunnelH(e.rd, e.s0 + Math.min(v.s, e.len)) : e.h0 != null ? e.h0 : 0); v.gp = path; v.gx = v.x; v.gz = v.z; }
 }
 function chooseNext(v, r) {
   const opts = v.lane.next; if (!opts.length) return null;
@@ -103,11 +111,18 @@ function trafficTick(dt) {
   const C = CAR, r = _trr;
   // spawn around the player, retire what is far away
   TR.spawnT -= dt;
-  if (TR.veh.length < TR.max && TR.spawnT <= 0) { TR.spawnT = 0.08; trafficSpawn(r); }
-  for (let i = TR.veh.length - 1; i >= 0; i--) { const v = TR.veh[i]; if (!v.cop && Math.hypot(v.x - C.x, v.z - C.z) > TR.far) { retire(v, i); } }
-  // sort each lane by distance so every vehicle knows its leader
-  for (const l of TR.lanes) if (l.veh.length > 1) l.veh.sort((p, q) => p.s - q.s);
-  for (const c of TR.conns) if (c.veh.length > 1) c.veh.sort((p, q) => p.s - q.s);
+  if (TR.veh.length < TR.max && TR.spawnT <= 0) { TR.spawnT = 0.03; trafficSpawn(r); }
+  const far2 = TR.far * TR.far, DBG = window.__dbgTr, cam = R3.cam ? R3.cam.position : C, cfx = Math.sin(CAMV.az), cfz = Math.cos(CAMV.az);
+  let n150 = 0, thin = null;
+  for (let i = TR.veh.length - 1; i >= 0; i--) {
+    const v = TR.veh[i], dx = v.x - C.x, dz = v.z - C.z, d2 = dx * dx + dz * dz; if (v.cop) continue;
+    if (d2 > far2) { retire(v, i); continue; }
+    if (d2 < 150 * 150) { n150++; if (!thin && d2 > 40 * 40 && (v.x - cam.x) * cfx + (v.z - cam.z) * cfz < 0) thin = v; }
+  }
+  if (n150 > TR.dense && thin) retire(thin, TR.veh.indexOf(thin));
+  // sort each occupied lane by distance so every vehicle knows its leader (only the paths someone is on: there are thousands)
+  const stamp = (TR.stamp = (TR.stamp || 0) + 1);
+  for (const v of TR.veh) { const pth = v.conn || v.lane; if (pth.st !== stamp) { pth.st = stamp; if (pth.veh.length > 1) pth.veh.sort(byS); } }
   const pv = Math.hypot(C.vx, C.vy), phx = Math.sin(C.yaw) * C.vx + Math.cos(C.yaw) * C.vy, phz = Math.cos(C.yaw) * C.vx - Math.sin(C.yaw) * C.vy;
   for (let i = 0; i < TR.veh.length; i++) {
     const v = TR.veh[i], path = v.conn || v.lane, list = path.veh, idx = list.indexOf(v);
@@ -137,17 +152,20 @@ function trafficTick(dt) {
         if (!must && v.nextC && v.nextC.turn === 'left' && rem < 12 && oncoming(v, n)) { if (gap == null || stopGap < gap) { gap = Math.max(0.05, stopGap); dv = v.v; } }
       } else if (rem < 10 && n.edges.length >= 3 && !v.cop) {
         // an unlit junction: wait for whoever is already in it, or coming down a bigger road; never for ever
-        if (junctionBusy(v, n) && v.wait < 6) { if (gap == null || stopGap < gap) { gap = Math.max(0.05, stopGap); dv = v.v; } v.wait += dt; } else v.wait = Math.max(0, v.wait - dt * 0.5);
+        if (junctionBusy(v, n) && v.wait < 3) { if (gap == null || stopGap < gap) { gap = Math.max(0.05, stopGap); dv = v.v; } v.wait += dt; } else v.wait = Math.max(0, v.wait - dt * 0.5);
       }
     }
     // the player, when on this vehicle's path ahead
     const dpx = C.x - v.x, dpz = C.z - v.z;
-    if (!v.cop && !C.ghost && dpx * dpx + dpz * dpz < 70 * 70) {
+    if (!v.cop && !C.ghost && dpx * dpx + dpz * dpz < 70 * 70 && Math.abs(v.y - C.y) < 3) {   // (not when one of us is up on a flyover above the other)
       const n = nearestOnPts(path.pts, C.x, C.z);
+      // only a player actually in front of it counts: one beside or behind (merging onto its lane, say) whose spot merely
+      // lies further along the path would hold it there while it blocks that player, and neither would ever go
+      const inFront = dpx * Math.sin(v.yaw) + dpz * Math.cos(v.yaw) > 0;
       // a player who just sits there is, after a while, nudged past rather than waited on for ever
-      const blocked = n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && n.s - v.s < 8 && v.v < 0.3 && pv < 0.5;
+      const blocked = inFront && n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && n.s - v.s < 8 && v.v < 0.3 && pv < 1;
       v.blockT = blocked ? (v.blockT || 0) + dt : 0;
-      if (n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && v.blockT < 2) { const g = n.s - v.s - (v.L + C.P.L) / 2; if (gap == null || g < gap) { gap = Math.max(0.05, g); const hx = Math.sin(n.yaw), hz = Math.cos(n.yaw); dv = v.v - (phx * hx + phz * hz); } }
+      if (inFront && n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && v.blockT < 2) { const g = n.s - v.s - (v.L + C.P.L) / 2; if (gap == null || g < gap) { gap = Math.max(0.05, g); const hx = Math.sin(n.yaw), hz = Math.cos(n.yaw); dv = v.v - (phx * hx + phz * hz); } }
       // a stopped or sideways player right in front: stop and lean on the horn
       if (gap != null && gap < 3 && v.v < 1 && pv < 1) { if (v.horn <= 0 && r() < dt * 0.3) { v.horn = 1.5; sfxHornFar(Math.hypot(dpx, dpz)); } }
     }
@@ -162,7 +180,7 @@ function trafficTick(dt) {
       if (dpx * dpx + dpz * dpz > 220 * 220) { retire(v, i); i--; continue; }
       gap = Math.max(gap, 7); dv = 0;
     }
-    if (window.__dbgTr) v.dbg = [gap == null ? null : +gap.toFixed(2), +dv.toFixed(2)];
+    if (DBG) v.dbg = [gap == null ? null : +gap.toFixed(2), +dv.toFixed(2)];
     const acc = idm(v, gap, dv);
     v.v = Math.max(0, v.v + clamp(acc, -6, 3) * dt); v.brake = acc < -0.8 ? 1 : 0;
     const vmaxHere = v.conn ? v.conn.vmax : v.lane.vmax; if (v.v > vmaxHere * 1.1) v.v = vmaxHere * 1.1;
@@ -179,6 +197,7 @@ function trafficTick(dt) {
   trafficCollide(dt);
   TR.stats.n = TR.veh.length;
 }
+const byS = (p, q) => p.s - q.s;
 function rm(list, v) { const i = list.indexOf(v); if (i >= 0) list.splice(i, 1); }
 function retire(v, i) { rm((v.conn || v.lane).veh, v); TR.veh.splice(i, 1); }
 // is anyone coming the other way, about to cross the junction?
@@ -193,31 +212,48 @@ function oncoming(v, n) {
 function junctionBusy(v, n) {
   // someone from another road is in the junction and moving (or from a road as big as ours)
   const cls = v.lane.e.K.cls;
-  for (const c of n.conns || []) if (c.veh.length && c.from.e !== v.lane.e && (c.from.e.K.cls >= cls || c.veh.some((w) => w.v > 0.5))) return true;
+  // (only those on the move: one standing in it is waiting itself, and if everyone waited on everyone standing, the streets
+  // would knot up wherever traffic is thick)
+  for (const c of n.conns || []) if (c.veh.length && c.from.e !== v.lane.e && c.veh.some((w) => w.v > (c.from.e.K.cls >= cls ? 0.3 : 1.5))) return true;
   // a bigger road's traffic close to the junction has the right of way over a lane
   if (v.lane.e.K.cls === 0) for (const l of n.lanesIn || []) if (l.e !== v.lane.e && l.e.K.cls > 0) for (const w of l.veh) if (l.len - w.s < 25 && w.v > 2) return true;
   return false;
 }
+// what lies round the car to spawn on: the city has thousands of lanes and pavements, so the draw is made only from those
+// within reach, kept in a list refreshed as the car moves on (weighted by length, so a long road gets its share)
+function ptsBB(pts) { let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const p of pts) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < z0) z0 = p[1]; if (p[1] > z1) z1 = p[1]; } return [x0, z0, x1, z1]; }
+function nearCands(all, R, old, minLen, wf) {
+  const C = CAR; if (old && (C.x - old.x) * (C.x - old.x) + (C.z - old.z) * (C.z - old.z) < 50 * 50) return old;
+  const list = [], cum = []; let tot = 0;
+  for (const l of all) {
+    if (l.len < minLen) continue; const b = l.bb || (l.bb = ptsBB(l.pts));
+    if (C.x < b[0] - R || C.x > b[2] + R || C.z < b[1] - R || C.z > b[3] + R) continue;
+    list.push(l); tot += Math.min(l.len, 2 * R) * (wf ? wf(l) : 1); cum.push(tot);
+  }
+  return { x: C.x, z: C.z, list, cum, tot };
+}
+const laneW8 = (l) => TR.cw[Math.min(3, l.e.K.cls)];
+function candPick(K, r) { const u = r() * K.tot; let lo = 0, hi = K.cum.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (K.cum[m] < u) lo = m + 1; else hi = m; } return K.list[lo]; }
 function trafficSpawn(r, minD) {
-  const C = CAR; let tries = 0;
+  const C = CAR, K = (TR.cand = nearCands(TR.lanes, TR.near + 60, TR.cand, 30, laneW8)); if (!K.list.length) return; let tries = 0;
   while (tries++ < 12) {
-    const l = TR.lanes[r.int(0, TR.lanes.length - 1)]; if (l.len < 30) continue;
+    const l = candPick(K, r);
     const s = 8 + r() * (l.len - 16), p = polyAt(l.pts, s), d = Math.hypot(p.x - C.x, p.z - C.z);
     if (d < (minD || 40) || d > TR.near) continue;
-    // never in plain view: behind or well to the side of the camera, or far enough to be lost in the haze
-    if (!minD && d < 330 && R3.cam) { const dx = p.x - R3.cam.position.x, dz = p.z - R3.cam.position.z, L = Math.hypot(dx, dz) || 1, fx = Math.sin(CAMV.az), fz = Math.cos(CAMV.az); if ((dx * fx + dz * fz) / L > 0.45) continue; }
+    // out of plain view (behind or well to the side of the camera), or far enough off to fade in unnoticed
+    let fade = false;
+    if (!minD && R3.cam) { const dx = p.x - R3.cam.position.x, dz = p.z - R3.cam.position.z, L = Math.hypot(dx, dz) || 1, fx = Math.sin(CAMV.az), fz = Math.cos(CAMV.az); if ((dx * fx + dz * fz) / L > 0.45) { if (d < TR.seen) continue; fade = true; } }
     // not on top of another, and not too dense for the road
-    const want = l.e.K.cls >= 3 ? 1 / 45 : l.e.K.cls === 2 ? 1 / 55 : l.e.K.cls === 1 ? 1 / 80 : 1 / 160;
-    if (l.veh.length >= Math.max(1, Math.floor(l.len * want))) continue;
+    if (l.veh.length >= Math.max(l.e.K.cls >= 2 ? 2 : 1, Math.floor(l.len * TR.dens[Math.min(3, l.e.K.cls)]))) continue;   // (a big road's short block still takes two)
     let ok = true; for (const w of l.veh) if (Math.abs(w.s - s) < 12) { ok = false; break; } if (!ok) continue;
-    spawnVehicle(l, s, r); return;
+    const v = spawnVehicle(l, s, r); if (v && fade) v.born = G.t; return;
   }
 }
 // the player against the traffic: two discs under the car against each vehicle's box; both feel it
 function trafficCollide(dt) {
   const C = CAR; if (C.ghost || !C.P) return; const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), rc = C.P.W * 0.5 * 0.9;
   for (const v of TR.veh) {
-    const dx = v.x - C.x, dz = v.z - C.z; if (dx * dx + dz * dz > 100) continue;
+    const dx = v.x - C.x, dz = v.z - C.z; if (dx * dx + dz * dz > 100 || Math.abs(v.y - C.y) > 3) continue;
     const c = Math.cos(v.yaw), sn = Math.sin(v.yaw), hx = v.W / 2, hz = v.L / 2, cx = v.x - sn * 0, cz = v.z - c * 0;
     for (let k = 0; k < 2; k++) {
       const off = k === 0 ? C.P.a * 0.95 : -C.P.b * 0.95, px = C.x + sy * off, pz = C.z + cy * off;
@@ -240,20 +276,22 @@ function trafficCollide(dt) {
 
 // at the start of a drive: the traffic already out and about, none of it within sixty metres of the car
 function trafficReset() {
-  for (const v of TR.veh) rm((v.conn || v.lane).veh, v); TR.veh.length = 0;
-  for (const w of PEO.list) w.loop.people--; PEO.list.length = 0;
-  const r = _trr; for (let i = 0; i < TR.max * 0.7; i++) trafficSpawn(r, 60);
-  for (let i = 0; i < PEO.max * 0.7; i++) spawnWalker(_pr);
-  for (let k = 0; k < 90; k++) { for (const l of TR.lanes) if (l.veh.length > 1) l.veh.sort((p, q) => p.s - q.s); for (const v of TR.veh) { v.s += v.v * 0.1; if (v.s >= (v.conn || v.lane).len - 2) v.s = (v.conn || v.lane).len - 2; vehPose(v); } }
-  // and nothing left sitting on top of us after the roll-forward
-  const C = CAR; for (let i = TR.veh.length - 1; i >= 0; i--) { const v = TR.veh[i]; if (Math.hypot(v.x - C.x, v.z - C.z) < 35) retire(v, i); }
+  for (const v of TR.veh) rm((v.conn || v.lane).veh, v); TR.veh.length = 0; TR.cand = null;
+  for (const w of PEO.list) w.loop.people--; PEO.list.length = 0; PEO.cand = null;
+  const r = _trr; for (let i = 0; i < TR.max * 0.85; i++) trafficSpawn(r, 30);
+  for (let i = 0; i < PEO.max * 0.85; i++) spawnWalker(_pr);
+  // a few seconds of the streets going about their business (the car not there yet), so the start is a street in motion,
+  // queued at the lights and spread along the blocks, not every vehicle where it was dropped
+  if (CAR.P) { const gh = CAR.ghost; CAR.ghost = true; for (let k = 0; k < 40; k++) trafficTick(0.1); CAR.ghost = gh; }
+  // and nothing left sitting on top of us
+  const C = CAR; for (let i = TR.veh.length - 1; i >= 0; i--) { const v = TR.veh[i]; if (Math.hypot(v.x - C.x, v.z - C.z) < 16) retire(v, i); }
 }
 
 // a police car set loose on a lane some way off, already moving, hunting the player
 function spawnCop(r) {
-  const C = CAR;
+  const C = CAR, K = (TR.cand = nearCands(TR.lanes, TR.near + 60, TR.cand, 30, laneW8)); if (!K.list.length) return null;
   for (let t = 0; t < 40; t++) {
-    const l = TR.lanes[r.int(0, TR.lanes.length - 1)]; if (l.e.K.cls < 1 || l.len < 30 || l.e.lvl) continue;
+    const l = candPick(K, r); if (l.e.K.cls < 1 || l.len < 30 || l.e.lvl) continue;
     const s = 5 + r() * (l.len - 10), p = polyAt(l.pts, s), d = Math.hypot(p.x - C.x, p.z - C.z); if (d < 120 || d > 320) continue;
     if (Math.sin(p.yaw) * (C.x - p.x) + Math.cos(p.yaw) * (C.z - p.z) < 0.3 * d) continue;   // heading our way
     const K = TRF.kinds.police, v = { kind: 'police', K, type: 'car', L: K.L, W: 1.8, lane: l, conn: null, s, v: 12, x: 0, z: 0, y: 0, yaw: 0, wait: 0, nextC: null, side: 0, brake: 0, horn: 0, id: Math.random(), cop: true, v0: 23, a: 3.8, b: 3, T: 0.6, s0: 1.5 };

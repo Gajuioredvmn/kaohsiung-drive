@@ -27,26 +27,27 @@ const SHADOW_GLSL = `
     return mix(1.0, s * 0.25, edge);
   }`;
 const BILLBOARD_VS = `
-  attribute vec3 iPos; attribute vec2 iSize; attribute vec4 iUV; attribute float iFlip;
-  varying vec2 vUv; varying float vFog; varying vec4 vShadow;
+  attribute vec3 iPos; attribute vec2 iSize; attribute vec4 iUV; attribute float iFlip; attribute float iFade;
+  varying vec2 vUv; varying float vFog; varying vec4 vShadow; varying float vFade;
   uniform vec3 camPos; uniform mat4 shadowMat;
   void main() {
     vec3 toCam = camPos - iPos; toCam.y = 0.0; vec3 fwd = normalize(toCam); vec3 right = vec3(fwd.z, 0.0, -fwd.x);
     vec3 up = vec3(0.0, 1.0, 0.0);
     if (iPos.y > 300.0) { vec3 f = normalize(camPos - iPos); right = normalize(cross(up, f)); up = cross(f, right); }   // the clouds face the camera fully, so they read from above too
     vec3 p = iPos + right * (position.x * iSize.x) + up * ((position.y + 0.5) * iSize.y);
-    float u = iFlip > 0.5 ? 1.0 - uv.x : uv.x;
+    float u = iFlip > 0.5 ? 1.0 - uv.x : uv.x; vFade = iFade;
     vUv = vec2(mix(iUV.x, iUV.z, u), mix(iUV.y, iUV.w, uv.y));
     vShadow = shadowMat * vec4(iPos + vec3(0.0, 0.4 + (position.y + 0.5) * iSize.y * 0.15, 0.0), 1.0);
     vec4 mv = modelViewMatrix * vec4(p, 1.0); vFog = -mv.z; gl_Position = projectionMatrix * mv;
   }`;
 const BILLBOARD_FS = `
   precision mediump float; uniform sampler2D map; uniform vec3 tint; uniform vec3 fogColor; uniform float fogNear, fogFar;
-  varying vec2 vUv; varying float vFog;` + SHADOW_GLSL + `
+  varying vec2 vUv; varying float vFog; varying float vFade;` + SHADOW_GLSL + `
   uniform float propK; uniform vec2 nearF;
   void main() { vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard;
     // right by the camera a sprite would fill the screen with a blur: it thins out in a fine dither instead
-    float nf = smoothstep(nearF.x, nearF.y, vFog); if (nf < 0.999 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) > nf) discard;
+    // (and one that has only just come into view thins in the same way)
+    float nf = smoothstep(nearF.x, nearF.y, vFog) * vFade; if (nf < 0.999 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) > nf) discard;
     float sh = mix(0.5, 1.0, shadowAt(0.6)); float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(c.rgb * tint * sh * propK, fogColor, f), 1.0); }`;
 // the city's shaders: a tile rectangle per vertex (or per box face), repeated with fract, lit by the sun direction
 // the tile repeats with fract(); the mip level comes from the unbroken uv, so the seams between repeats do not blur
@@ -381,20 +382,20 @@ function r3Props() {
   const n = PROPS.list.length, pos = new Float32Array(n * 3), size = new Float32Array(n * 2), uv = new Float32Array(n * 4), flip = new Float32Array(n);
   PROPS.list.forEach((p, i) => { const K = PROPS.kinds[p.k]; pos[i * 3] = p.x; pos[i * 3 + 1] = p.y - 0.05; pos[i * 3 + 2] = p.z; size[i * 2] = K.wM * p.s; size[i * 2 + 1] = K.hM * p.s; uv.set(K.uv, i * 4); flip[i] = p.flip ? 1 : 0; });
   const geo = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); geo.instanceCount = n;
-  geo.setAttribute('iPos', new THREE.InstancedBufferAttribute(pos, 3)); geo.setAttribute('iSize', new THREE.InstancedBufferAttribute(size, 2)); geo.setAttribute('iUV', new THREE.InstancedBufferAttribute(uv, 4)); geo.setAttribute('iFlip', new THREE.InstancedBufferAttribute(flip, 1));
+  geo.setAttribute('iPos', new THREE.InstancedBufferAttribute(pos, 3)); geo.setAttribute('iSize', new THREE.InstancedBufferAttribute(size, 2)); geo.setAttribute('iUV', new THREE.InstancedBufferAttribute(uv, 4)); geo.setAttribute('iFlip', new THREE.InstancedBufferAttribute(flip, 1)); geo.setAttribute('iFade', new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1));
   const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, nearF: { value: new THREE.Vector2(0, 0.001) }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.propMesh = m; R3.propUV = geo.getAttribute('iUV'); R3.propTex = tex;
   // the walkers: the same atlas, a mesh of their own whose instances move
   const N = PEO.max, g2 = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g2.instanceCount = 0;
-  const A = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3), size: new THREE.InstancedBufferAttribute(new Float32Array(N * 2), 2), uv: new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4), flip: new THREE.InstancedBufferAttribute(new Float32Array(N), 1) };
+  const A = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3), size: new THREE.InstancedBufferAttribute(new Float32Array(N * 2), 2), uv: new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4), flip: new THREE.InstancedBufferAttribute(new Float32Array(N), 1), fade: new THREE.InstancedBufferAttribute(new Float32Array(N).fill(1), 1) };
   for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
-  g2.setAttribute('iPos', A.pos); g2.setAttribute('iSize', A.size); g2.setAttribute('iUV', A.uv); g2.setAttribute('iFlip', A.flip);
+  g2.setAttribute('iPos', A.pos); g2.setAttribute('iSize', A.size); g2.setAttribute('iUV', A.uv); g2.setAttribute('iFlip', A.flip); g2.setAttribute('iFade', A.fade);
   const m2 = new THREE.Mesh(g2, mat); m2.frustumCulled = false; scene3Add(m2); R3.peopleMesh = m2; R3.peopleA = A;
   // and the little things that change: the countdown digits on the signals, the brake lamps of the traffic
   const N3 = 1600, g3 = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g3.instanceCount = 0;
   const B = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 3), 3), size: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 2), 2), uv: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 4), 4), flip: new THREE.InstancedBufferAttribute(new Float32Array(N3), 1) };
   for (const a of Object.values(B)) a.setUsage(THREE.DynamicDrawUsage);
-  g3.setAttribute('iPos', B.pos); g3.setAttribute('iSize', B.size); g3.setAttribute('iUV', B.uv); g3.setAttribute('iFlip', B.flip);
+  g3.setAttribute('iPos', B.pos); g3.setAttribute('iSize', B.size); g3.setAttribute('iUV', B.uv); g3.setAttribute('iFlip', B.flip); g3.setAttribute('iFade', new THREE.InstancedBufferAttribute(new Float32Array(N3).fill(1), 1));
   const m3 = new THREE.Mesh(g3, mat); m3.frustumCulled = false; scene3Add(m3); R3.fxMesh = m3; R3.fxA = B; R3.fxMax = N3;
 }
 // the illustrated style's lights: soft banded glows facing the camera, and pools of light laid on the ground (both added on)
@@ -416,7 +417,7 @@ function r3LightsInit() {
     const m = new THREE.Mesh(g, new THREE.ShaderMaterial({ vertexShader: vs, fragmentShader: fs, uniforms: { k: { value: 1 }, kc: { value: new THREE.Vector3(1, 1, 1) }, camPos: { value: new THREE.Vector3() } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     m.frustumCulled = false; m.renderOrder = 5; scene3Add(m); return { m, A, N, n: 0 };
   };
-  R3.glows = mk(GLOW_VS, GLOW_FS, 1400); R3.pools = mk(POOL_VS, POOL_FS, 500);
+  R3.glows = mk(GLOW_VS, GLOW_FS, 2200); R3.pools = mk(POOL_VS, POOL_FS, 600);
 }
 const LAMP_C = [1.0, 0.8, 0.46], POOL_C = [0.62, 0.4, 0.12], HEAD_C = [1.0, 0.95, 0.8], TAIL_C = [1.0, 0.18, 0.12];
 function lightPut(L, x, y, z, s, c) { if (L.n >= L.N) return; const i = L.n++; L.A.pos.array[i * 3] = x; L.A.pos.array[i * 3 + 1] = y; L.A.pos.array[i * 3 + 2] = z; L.A.size.array[i] = s; L.A.col.array[i * 3] = c[0]; L.A.col.array[i * 3 + 1] = c[1]; L.A.col.array[i * 3 + 2] = c[2]; }
@@ -465,6 +466,7 @@ function r3PeopleUpdate() {
     A.pos.array[k * 3] = w.x; A.pos.array[k * 3 + 1] = w.y - 0.05; A.pos.array[k * 3 + 2] = w.z;
     A.size.array[k * 2] = K.wM; A.size.array[k * 2 + 1] = K.hM; A.uv.array.set(K.uv, k * 4);
     const rx_ = cam.z - w.z, rz_ = -(cam.x - w.x); A.flip.array[k] = (Math.sin(w.yaw) * rx_ + Math.cos(w.yaw) * rz_) > 0 ? 1 : 0;   // facing the way they walk
+    A.fade.array[k] = w.born == null ? 1 : Math.min(1, (G.t - w.born) / 0.8);
     k++;
   }
   m.geometry.instanceCount = k; for (const a of Object.values(A)) a.needsUpdate = true;
@@ -477,22 +479,22 @@ function r3Traffic() {
   let x = 0, y = 0, rowH = 0;
   for (const it of items) { const w = it.f.px.cw || it.f.px.w, h = it.f.px.ch || it.f.px.h; if (x + w + 2 > AW) { x = 0; y += rowH + 2; rowH = 0; } if (y + h + 2 > AH) { reportErr('traffic atlas full'); break; } g.drawImage(it.f.px.toCanvas(), x + 1, y + 1); it.f.uv = [(x + 1) / AW, 1 - (y + 1 + h) / AH, (x + 1 + w) / AW, 1 - (y + 1) / AH]; x += w + 2; rowH = Math.max(rowH, h); }
   const tex = new THREE.CanvasTexture(atlas); tex.magFilter = STYLE.toon ? THREE.LinearFilter : THREE.NearestFilter; tex.minFilter = STYLE.toon ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; tex.generateMipmaps = STYLE.toon; tex.colorSpace = THREE.SRGBColorSpace;
-  const n = TR.max, pos = new Float32Array(n * 3), size = new Float32Array(n * 2), uv = new Float32Array(n * 4), flip = new Float32Array(n);
+  const n = TR.max + 40, pos = new Float32Array(n * 3), size = new Float32Array(n * 2), uv = new Float32Array(n * 4), flip = new Float32Array(n);   // (room for the police on top of the traffic)
   const geo = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); geo.instanceCount = 0;
-  const A = { pos: new THREE.InstancedBufferAttribute(pos, 3), size: new THREE.InstancedBufferAttribute(size, 2), uv: new THREE.InstancedBufferAttribute(uv, 4), flip: new THREE.InstancedBufferAttribute(flip, 1) };
+  const A = { pos: new THREE.InstancedBufferAttribute(pos, 3), size: new THREE.InstancedBufferAttribute(size, 2), uv: new THREE.InstancedBufferAttribute(uv, 4), flip: new THREE.InstancedBufferAttribute(flip, 1), fade: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1) };
   for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
-  geo.setAttribute('iPos', A.pos); geo.setAttribute('iSize', A.size); geo.setAttribute('iUV', A.uv); geo.setAttribute('iFlip', A.flip);
+  geo.setAttribute('iPos', A.pos); geo.setAttribute('iSize', A.size); geo.setAttribute('iUV', A.uv); geo.setAttribute('iFlip', A.flip); geo.setAttribute('iFade', A.fade);
   const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, nearF: { value: new THREE.Vector2(0, 0.001) }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.trafficMesh = m; R3.trafficA = A;
 }
 function r3TrafficUpdate() {
   const m = R3.trafficMesh; if (!m) return; const A = R3.trafficA, cam = R3.cam.position, N = TRF.N; let k = 0;
   for (const v of TR.veh) {
-    if (k >= TR.max) break;
+    if (k >= TR.max + 40) break;
     const look = Math.atan2(v.x - cam.x, v.z - cam.z), rel = angWrap(v.yaw - look);
     const i = Math.min(N - 1, Math.round(Math.abs(rel) / (Math.PI / (N - 1)))), f = v.K.frames[i], ppm = v.K.type === 'bus' || v.kind === 'gravel' ? TRF.ppmLong : TRF.ppm;
     A.pos.array[k * 3] = v.x; A.pos.array[k * 3 + 1] = v.y - 3 / ppm; A.pos.array[k * 3 + 2] = v.z;
-    A.size.array[k * 2] = f.wM; A.size.array[k * 2 + 1] = f.hM; A.uv.array.set(f.uv, k * 4); A.flip.array[k] = rel > 0 ? 1 : 0;
+    A.size.array[k * 2] = f.wM; A.size.array[k * 2 + 1] = f.hM; A.uv.array.set(f.uv, k * 4); A.flip.array[k] = rel > 0 ? 1 : 0; A.fade.array[k] = v.born == null ? 1 : Math.min(1, (G.t - v.born) / 0.8);
     k++;
   }
   m.geometry.instanceCount = k; for (const a of Object.values(A)) a.needsUpdate = true;
