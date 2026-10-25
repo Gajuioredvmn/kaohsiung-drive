@@ -164,8 +164,9 @@ function drawCockpit() {
 }
 // ---------- test hooks ----------
 window.__kh = {
-  G, CAR, CAMV, CTL, MAP, PROPS, R3, SET, CARS, CITY, ATLAS, setTod, AERIAL, aerialEnter, startDrive, carToRoad, show, carPhysics, groundH, solidsNear, solidAt, nearestRoad, SOL, r3Cull, TR, TRF, PEO, MIS, PRO, WANT, heatUp, turn(ci, i) { return carTurnFrame(CARS[ci], i).toDataURL(); },
+  G, CAR, CAMV, CTL, MAP, PROPS, R3, SET, CARS, CITY, ATLAS, setTod, AERIAL, aerialEnter, startDrive, carToRoad, show, trafficReset, carPhysics, groundH, solidsNear, solidAt, nearestRoad, SOL, r3Cull, TR, TRF, PEO, MIS, PRO, WANT, heatUp, turn(ci, i) { return carTurnFrame(CARS[ci], i).toDataURL(); },
   halt(on) { G.halt = !!on; }, sim(sec, h) { h = h || 1 / 120; const n = Math.round(sec / h); for (let i = 0; i < n; i++) tick(h); return this.state(); },
   step(dt) { tick(dt); render(dt); return $('gl').toDataURL('image/png'); },
+  draw() { render(0); return $('gl').toDataURL('image/png'); },
   state() { const C = CAR; return { x: +C.x.toFixed(1), z: +C.z.toFixed(1), yaw: +C.yaw.toFixed(2), kmh: Math.round(C.kmh), vy: +C.vy.toFixed(2), r: +C.r.toFixed(2), rpm: Math.round(C.rpm), gear: C.gear, surf: C.surface, slip: +C.slipK.toFixed(2), dmg: +C.damage.toFixed(2), fps: G.fps }; },
 };

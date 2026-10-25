@@ -99,8 +99,9 @@ function busModel(band, view) {
       for (const sx of [-1, 1]) { const q = plate(c, zf, sx * (hw - 0.4), sx * (hw - 0.1), 0.62, 0.9, 0xfff8dc); lampBox(c, q); }
       plate(c, zf, -0.5, 0.5, 0.56, 1.0, 0x2a2a34);
     }
-    // the stripe along the flank and the windows, visible when turned
-    for (const sx of [-1, 1]) { detail(c, [[sx * (hw + 0.001), 1.1, Z(-zA + 0.2)], [sx * (hw + 0.001), 1.1, Z(L - zA - 0.6)], [sx * (hw + 0.001), 1.3, Z(L - zA - 0.6)], [sx * (hw + 0.001), 1.3, Z(-zA + 0.2)]], band); detail(c, [[sx * (hw + 0.001), 1.8, Z(-zA + 0.3)], [sx * (hw + 0.001), 1.8, Z(L - zA - 0.7)], [sx * (hw + 0.001), 2.9, Z(L - zA - 0.7)], [sx * (hw + 0.001), 2.9, Z(-zA + 0.3)]], GLASS[0]); }
+    // the stripe along the flank and the windows, visible when turned (sorted well ahead of the long flank they sit on,
+    // whose middle is no nearer than theirs: seen from behind at an angle they would otherwise go under it)
+    for (const sx of [-1, 1]) { detail(c, [[sx * (hw + 0.001), 1.1, Z(-zA + 0.2)], [sx * (hw + 0.001), 1.1, Z(L - zA - 0.6)], [sx * (hw + 0.001), 1.3, Z(L - zA - 0.6)], [sx * (hw + 0.001), 1.3, Z(-zA + 0.2)]], band, 0.5); detail(c, [[sx * (hw + 0.001), 1.8, Z(-zA + 0.3)], [sx * (hw + 0.001), 1.8, Z(L - zA - 0.7)], [sx * (hw + 0.001), 2.9, Z(L - zA - 0.7)], [sx * (hw + 0.001), 2.9, Z(-zA + 0.3)]], GLASS[0], 0.5); }
   }];
   return { parts: [body], tyres, extras, shadow: { hw: hw + 0.08, z0: Z(-zA), z1: Z(L - zA) } };
 }
@@ -217,9 +218,19 @@ function scooterModel(col, helmet, shirt, view) {
   const tyres = [{ x: 0, z: Z(0), R: 0.24, w: 0.1 }, { x: 0, z: Z(wb), R: 0.24, w: 0.1 }];
   const extras = [(c) => {
     if (view !== 'front') { const z = Z(-zA) - 0.001; const q = plate(c, z, -0.1, 0.1, 0.6, 0.7, 0xe8343a); lampBox(c, q); plate(c, z, -0.08, 0.08, 0.48, 0.56, 0xf4f4ec); }
-    if (view !== 'rear') { const z = Z(L - zA) + 0.001; const q = plate(c, z, -0.1, 0.1, 0.55, 0.68, 0xfff8d8); lampBox(c, q); plate(c, Z(0.62) + 0.001, -0.1, 0.1, 1.54, 1.64, 0x2a3440); }
+    if (view !== 'rear') { const z = Z(L - zA) + 0.001; const q = plate(c, z, -0.1, 0.1, 0.55, 0.68, 0xfff8d8); lampBox(c, q); if (!STYLE.toon) plate(c, Z(0.62) + 0.001, -0.1, 0.1, 1.54, 1.64, 0x2a3440); }
   }];
-  return { parts: [body, seat, legs, torso, arms, head, bars], tyres, extras, shadow: { hw: 0.34, z0: Z(-zA), z1: Z(L - zA) } };
+  // the illustrated style gives the rider a round helmet with its visor and a bit of face, instead of the boxy head
+  if (STYLE.toon) extras.push((c) => {
+    const cen = c.pr(0, 1.6, 0.46), top = c.pr(0, 1.78, 0.46), r = Math.max(1.5, Math.hypot(top[0] - cen[0], top[1] - cen[1])), vis = c.pr(0, 1.57, 0.62), front = vis[2] < cen[2] - 0.02;
+    c.items.push({ d: cen[2] - 0.03, L: 1, draw: () => {
+      const g = c.px.g; if (!g) return;
+      g.strokeStyle = INK; g.lineWidth = 0.8; g.fillStyle = cssHex(helmet); g.beginPath(); g.ellipse(cen[0], cen[1], r * 1.04, r, 0, 0, TAU); g.fill(); g.stroke();
+      g.fillStyle = 'rgba(255,255,255,0.5)'; g.beginPath(); g.ellipse(cen[0] - r * 0.35, cen[1] - r * 0.45, r * 0.32, r * 0.18, -0.5, 0, TAU); g.fill();
+      if (front) { const vx = vis[0], vy = vis[1]; g.fillStyle = '#f2c8a0'; g.beginPath(); g.ellipse(vx, vy + r * 0.3, r * 0.5, r * 0.3, 0, 0, TAU); g.fill(); g.fillStyle = '#2a3440'; g.beginPath(); g.ellipse(vx, vy - r * 0.05, r * 0.62, r * 0.32, 0, 0, TAU); g.fill(); g.stroke(); }
+    } });
+  });
+  return { parts: STYLE.toon ? [body, seat, legs, torso, arms, bars] : [body, seat, legs, torso, arms, head, bars], tyres, extras, shadow: { hw: 0.34, z0: Z(-zA), z1: Z(L - zA) } };
 }
 // ---------- the sprite sheets: thirteen frames from behind round to head-on ----------
 const TRF = { ppm: 28, ppmLong: 20, D: 18, H: 2.2, N: 13, kinds: {}, atlas: null };

@@ -394,11 +394,12 @@ function tContainer(seed) {
   p.text(['PORT', 'KHH', 'SEA', 'LINE', 'BLUE'][seed % 5], 6, 1.0, 0.8, '#f6f1e6', { stroke: 0.06, strokeCol: tshade(c, -0.5) });
   return p.done();
 }
-function tWarehouse(seed) {   // 駁二: corrugated sheds painted with murals
-  const R = mulberry(seed), p = new TP(16, 8, 16, seed), c = ['#9aa3ad', '#a8a297', '#8f98a2', '#b8b0a2'][seed % 4];
+function tWarehouse(seed, plain) {   // 駁二: corrugated sheds painted with murals (plain ones for the factories)
+  const R = mulberry(seed), p = new TP(16, 8, 16, seed), c = plain ? ['#a9b2bc', '#b8b2a6', '#9aa6b2', '#c2bdb2'][seed % 4] : ['#9aa3ad', '#a8a297', '#8f98a2', '#b8b0a2'][seed % 4];
   for (let x = 0; x < 16; x += 0.4) { p.rect(x, 0, 0.2, 8, tshade(c, 0.1)); p.rect(x + 0.2, 0, 0.2, 8, tshade(c, -0.08)); }
   p.rect(0, 0, 16, 0.5, tshade(c, -0.35)); p.box(0.6, 4.8, 3.6, 3.2, '#3a3a48', 0.08); for (let y = 5.0; y < 8; y += 0.25) p.rect(0.7, y, 3.4, 0.06, '#50505e');
-  if (R() < 0.85) { const cols = ['#f2c94c', '#e8504a', '#3a6ab8', '#4fae6a', '#f6f1e6', '#ef8a3a', '#ff8fae']; for (let k = 0; k < 8; k++) p.ell(5.6 + k * 1.25, 2.6 + Math.sin(k * 1.7) * 1.2, 0.9 + R() * 0.9, 0.8 + R() * 0.9, cols[k % cols.length], 0.06); p.text(R.pick(['駁二', '倉庫', 'PIER-2', 'ART']), 10.5, 5.6, 1.5, '#f6f1e6', { stroke: 0.12 }); }
+  if (plain) { for (let k = 0; k < 4; k++) p.box(6 + k * 2.4, 1.2, 1.6, 0.9, '#5a6a7a', 0.06); p.box(13, 4.8, 2.4, 3.2, tshade(c, -0.25), 0.06); p.rect(0, 7.6, 16, 0.4, tshade(c, -0.3)); }
+  else if (R() < 0.85) { const cols = ['#f2c94c', '#e8504a', '#3a6ab8', '#4fae6a', '#f6f1e6', '#ef8a3a', '#ff8fae']; for (let k = 0; k < 8; k++) p.ell(5.6 + k * 1.25, 2.6 + Math.sin(k * 1.7) * 1.2, 0.9 + R() * 0.9, 0.8 + R() * 0.9, cols[k % cols.length], 0.06); p.text(R.pick(['駁二', '倉庫', 'PIER-2', 'ART']), 10.5, 5.6, 1.5, '#f6f1e6', { stroke: 0.12 }); }
   p.ink(0, 0, 16, 8, 0.1);
   return p.done();
 }
@@ -447,7 +448,7 @@ function atlasPaintToon() {
   for (let i = 0; i < 3; i++) tile('walk' + i, tWalk(20 + i)); tile('zebra', tZebra()); tile('median', tMedian());
   for (let i = 0; i < 8; i++) tile('wall' + i, tWallTile(100 + i, (i * 5) % TWALL.length));
   for (let i = 0; i < 4; i++) tile('roof' + i, tRoofTile(200 + i, 'concrete')); for (let i = 0; i < 3; i++) tile('tin' + i, tRoofTile(210 + i, 'tin')); tile('rooftiles', tRoofTile(220, 'tiles')); tile('glassroof', tRoofTile(230, 'glass'));
-  for (let i = 0; i < 4; i++) tile('col' + i, tColumn(300 + i)); for (let i = 0; i < 6; i++) tile('box' + i, tContainer(400 + i)); for (let i = 0; i < 4; i++) tile('wh' + i, tWarehouse(500 + i)); for (let i = 0; i < 3; i++) tile('betel' + i, tBetel(600 + i)); for (let i = 0; i < 6; i++) tile('bb' + i, tBillboard(700 + i));
+  for (let i = 0; i < 4; i++) tile('col' + i, tColumn(300 + i)); for (let i = 0; i < 6; i++) tile('box' + i, tContainer(400 + i)); for (let i = 0; i < 4; i++) tile('wh' + i, tWarehouse(500 + i)); for (let i = 0; i < 4; i++) tile('shed' + i, tWarehouse(520 + i, true)); for (let i = 0; i < 3; i++) tile('betel' + i, tBetel(600 + i)); for (let i = 0; i < 6; i++) tile('bb' + i, tBillboard(700 + i));
   for (const type of Object.keys(SHOP_TYPES)) { if (type === 'hotel') continue; const n = type === 'shutter' || type === 'bank' || type === 'cvs' ? 4 : 8; ATLAS.shops[type] = []; for (let i = 0; i < n; i++) { const nm = 'sh_' + type + i; tile(nm, tShop(1000 + i * 13 + strSeed(type) % 97, type)); ATLAS.shops[type].push(nm); } }
   for (const dist of ['town', 'centre', 'yancheng', 'bay']) for (const w of [5, 6, 7]) for (let i = 0; i < 5; i++) {
     const floors = dist === 'yancheng' ? 2 + (i % 2) : dist === 'bay' ? 4 + (i % 2) : 3 + (i % 3), seed = strSeed(dist) + w * 31 + i * 7;

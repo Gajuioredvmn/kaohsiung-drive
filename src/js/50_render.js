@@ -43,8 +43,11 @@ const BILLBOARD_VS = `
 const BILLBOARD_FS = `
   precision mediump float; uniform sampler2D map; uniform vec3 tint; uniform vec3 fogColor; uniform float fogNear, fogFar;
   varying vec2 vUv; varying float vFog;` + SHADOW_GLSL + `
-  uniform float propK;
-  void main() { vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard; float sh = mix(0.5, 1.0, shadowAt(0.6)); float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(c.rgb * tint * sh * propK, fogColor, f), 1.0); }`;
+  uniform float propK; uniform vec2 nearF;
+  void main() { vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard;
+    // right by the camera a sprite would fill the screen with a blur: it thins out in a fine dither instead
+    float nf = smoothstep(nearF.x, nearF.y, vFog); if (nf < 0.999 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) > nf) discard;
+    float sh = mix(0.5, 1.0, shadowAt(0.6)); float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(c.rgb * tint * sh * propK, fogColor, f), 1.0); }`;
 // the city's shaders: a tile rectangle per vertex (or per box face), repeated with fract, lit by the sun direction
 // the tile repeats with fract(); the mip level comes from the unbroken uv, so the seams between repeats do not blur
 const CITY_FS = `
@@ -379,7 +382,7 @@ function r3Props() {
   PROPS.list.forEach((p, i) => { const K = PROPS.kinds[p.k]; pos[i * 3] = p.x; pos[i * 3 + 1] = p.y - 0.05; pos[i * 3 + 2] = p.z; size[i * 2] = K.wM * p.s; size[i * 2 + 1] = K.hM * p.s; uv.set(K.uv, i * 4); flip[i] = p.flip ? 1 : 0; });
   const geo = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); geo.instanceCount = n;
   geo.setAttribute('iPos', new THREE.InstancedBufferAttribute(pos, 3)); geo.setAttribute('iSize', new THREE.InstancedBufferAttribute(size, 2)); geo.setAttribute('iUV', new THREE.InstancedBufferAttribute(uv, 4)); geo.setAttribute('iFlip', new THREE.InstancedBufferAttribute(flip, 1));
-  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, ...shadowUni() }, transparent: false });
+  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, nearF: { value: new THREE.Vector2(0, 0.001) }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.propMesh = m; R3.propUV = geo.getAttribute('iUV'); R3.propTex = tex;
   // the walkers: the same atlas, a mesh of their own whose instances move
   const N = PEO.max, g2 = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g2.instanceCount = 0;
@@ -458,7 +461,7 @@ function r3PeopleUpdate() {
   const m = R3.peopleMesh; if (!m) return; const A = R3.peopleA, cam = R3.cam.position; let k = 0;
   for (const w of PEO.list) {
     if (k >= PEO.max) break;
-    const name = w.knocked > 0 ? w.kind + 'd' : (w.anim % 0.7 < 0.35 ? w.kind : w.kind + 'w'), K = PROPS.kinds[name]; if (!K) continue;
+    const name = w.knocked > 0 ? w.kind + 'd' : STYLE.toon ? (w.wait > 0 || w.dodge > 0.5 ? w.kind : w.kind + 'w' + (Math.floor(w.anim * 1.7) % 4)) : (w.anim % 0.7 < 0.35 ? w.kind : w.kind + 'w'), K = PROPS.kinds[name]; if (!K) continue;
     A.pos.array[k * 3] = w.x; A.pos.array[k * 3 + 1] = w.y - 0.05; A.pos.array[k * 3 + 2] = w.z;
     A.size.array[k * 2] = K.wM; A.size.array[k * 2 + 1] = K.hM; A.uv.array.set(K.uv, k * 4);
     const rx_ = cam.z - w.z, rz_ = -(cam.x - w.x); A.flip.array[k] = (Math.sin(w.yaw) * rx_ + Math.cos(w.yaw) * rz_) > 0 ? 1 : 0;   // facing the way they walk
@@ -479,7 +482,7 @@ function r3Traffic() {
   const A = { pos: new THREE.InstancedBufferAttribute(pos, 3), size: new THREE.InstancedBufferAttribute(size, 2), uv: new THREE.InstancedBufferAttribute(uv, 4), flip: new THREE.InstancedBufferAttribute(flip, 1) };
   for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('iPos', A.pos); geo.setAttribute('iSize', A.size); geo.setAttribute('iUV', A.uv); geo.setAttribute('iFlip', A.flip);
-  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, ...shadowUni() }, transparent: false });
+  const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, nearF: { value: new THREE.Vector2(0, 0.001) }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.trafficMesh = m; R3.trafficA = A;
 }
 function r3TrafficUpdate() {
@@ -494,6 +497,9 @@ function r3TrafficUpdate() {
   }
   m.geometry.instanceCount = k; for (const a of Object.values(A)) a.needsUpdate = true;
   m.material.uniforms.camPos.value.copy(cam);
+  // how near the camera a sprite starts to thin out: well clear of the shoulder in the chase view, only at the glass in the cockpit
+  const nf = G.mode !== 'drive' ? [0, 0.001] : CAMV.fp ? [0.35, 0.8] : [1.8, 4.2];
+  for (const mm of [m, R3.propMesh]) if (mm) mm.material.uniforms.nearF.value.set(nf[0], nf[1]);
 }
 // a prop's picture swapped for another of the same atlas (the signal lamps)
 function propSetKind(p, name) { if (!p || p.k === name) return; const K = PROPS.kinds[name]; if (!K || !R3.propUV) return; p.k = name; R3.propUV.array.set(K.uv, p.i * 4); R3.propUV.needsUpdate = true; }
@@ -533,7 +539,7 @@ const BLUR_FS = `precision mediump float; uniform sampler2D tex; uniform vec2 di
   void main() { vec4 c = vec4(0.0); float w[5]; w[0]=0.227; w[1]=0.194; w[2]=0.121; w[3]=0.054; w[4]=0.016;
     c += texture2D(tex, vUv) * w[0]; for (int i = 1; i < 5; i++) { c += texture2D(tex, vUv + dir * float(i)) * w[i]; c += texture2D(tex, vUv - dir * float(i)) * w[i]; } gl_FragColor = c; }`;
 const BRIGHT_FS = `precision mediump float; uniform sampler2D tex; uniform vec2 thr; varying vec2 vUv; void main() { vec4 c = texture2D(tex, vUv); float l = dot(c.rgb, vec3(0.3, 0.59, 0.11)); gl_FragColor = vec4(c.rgb * smoothstep(thr.x, thr.y, l), 1.0); }`;
-const COMP_FS = `precision highp float; uniform sampler2D tex, blur, bloom; uniform highp sampler2D depthTex; uniform float near, far, focus, aspect, bloomK, dofK, sat, inkOn, inkFar, inkK, inkScale, inkThr; uniform vec2 texel; uniform vec3 grade, inkCol; varying vec2 vUv;
+const COMP_FS = `precision highp float; uniform sampler2D tex, blur, bloom; uniform highp sampler2D depthTex; uniform float near, far, focus, aspect, bloomK, dofK, sat, inkOn, inkFar, inkK, inkScale, inkThr; uniform vec2 texel, inkNear; uniform vec3 grade, inkCol; varying vec2 vUv;
   float lin(float d) { float z = d * 2.0 - 1.0; return (2.0 * near * far) / (far + near - z * (far - near)); }
   float dAt(vec2 o) { return lin(texture2D(depthTex, vUv + o * texel).r); }
   void main() {
@@ -547,7 +553,7 @@ const COMP_FS = `precision highp float; uniform sampler2D tex, blur, bloom; unif
       float i0 = 1.0 / d, dl = dAt(vec2(-1.0, 0.0)), dr = dAt(vec2(1.0, 0.0)), du = dAt(vec2(0.0, 1.0)), dd = dAt(vec2(0.0, -1.0));
       float e = (abs(1.0 / dl + 1.0 / dr - 2.0 * i0) + abs(1.0 / du + 1.0 / dd - 2.0 * i0)) * d;
       float thr = inkThr * (1.0 + d / inkScale);   // farther off, only the bigger breaks (a decal's offset or a kerb far away is no line)
-      float ink = smoothstep(thr, thr * 3.0, e) * (1.0 - smoothstep(inkFar * 0.45, inkFar, d)) * (1.0 - k * 0.7) * inkK;
+      float ink = smoothstep(thr, thr * 3.0, e) * (1.0 - smoothstep(inkFar * 0.45, inkFar, d)) * smoothstep(inkNear.x, inkNear.y, d) * (1.0 - k * 0.7) * inkK;   // (no ink on the dither of a sprite right by the camera)
       c = mix(c, inkCol, ink);
     }
     c *= grade; c = mix(vec3(dot(c, vec3(0.3, 0.59, 0.11))), c, sat); vec2 q = (vUv - 0.5) * vec2(aspect, 1.0); c *= 1.0 - dot(q, q) * 0.5;
@@ -560,7 +566,7 @@ function r3Post() {
   P.bright = new THREE.ShaderMaterial({ vertexShader: QUAD_VS, fragmentShader: BRIGHT_FS, uniforms: { tex: { value: null }, thr: { value: new THREE.Vector2(0.62, 0.95) } }, depthTest: false });
   const toon = STYLE.toon;
   P.comp = new THREE.ShaderMaterial({ vertexShader: QUAD_VS, fragmentShader: COMP_FS, uniforms: { tex: { value: null }, blur: { value: null }, bloom: { value: null }, depthTex: { value: null }, near: { value: 0.6 }, far: { value: 2600 }, focus: { value: 14 }, aspect: { value: 1.7 }, grade: { value: new THREE.Vector3(1.03, 1.0, 0.96) },
-    bloomK: { value: toon ? 0.32 : 0.5 }, dofK: { value: toon ? 0.45 : 1 }, sat: { value: toon ? 1.08 : 1.18 }, inkOn: { value: toon ? 1 : 0 }, inkFar: { value: 900 }, inkK: { value: 0.9 }, inkScale: { value: 70 }, inkThr: { value: 0.035 }, texel: { value: new THREE.Vector2(1 / 1280, 1 / 720) }, inkCol: { value: new THREE.Color(0x2b2233) } }, depthTest: false });
+    bloomK: { value: toon ? 0.32 : 0.5 }, dofK: { value: toon ? 0.45 : 1 }, sat: { value: toon ? 1.08 : 1.18 }, inkOn: { value: toon ? 1 : 0 }, inkFar: { value: 900 }, inkK: { value: 0.9 }, inkScale: { value: 70 }, inkThr: { value: 0.035 }, texel: { value: new THREE.Vector2(1 / 1280, 1 / 720) }, inkNear: { value: new THREE.Vector2(0, 0.001) }, inkCol: { value: new THREE.Color(0x2b2233) } }, depthTest: false });
   R3.post = P; r3PostResize();
 }
 function r3PostResize() {
@@ -581,7 +587,7 @@ function r3FrameFX(focusDist) {
   const w2 = R3.w >> 1, h2 = R3.h >> 1, w4 = R3.w >> 2, h4 = R3.h >> 2;
   r3Pass(P.blur, P.rt, P.a, [1.0, 0], w2, h2); r3Pass(P.blur, P.a, P.b, [0, 1.0], w2, h2); r3Pass(P.blur, P.b, P.a, [1.6, 0], w2, h2); r3Pass(P.blur, P.a, P.b, [0, 1.6], w2, h2);
   r3Pass(P.bright, P.rt, P.ba, null, w4, h4); r3Pass(P.blur, P.ba, P.bb, [2, 0], w4, h4); r3Pass(P.blur, P.bb, P.ba, [0, 2], w4, h4); r3Pass(P.blur, P.ba, P.bb, [3, 0], w4, h4); r3Pass(P.blur, P.bb, P.ba, [0, 3], w4, h4);
-  const u = P.comp.uniforms; if (G.mode === 'drive') { u.inkFar.value = 900; u.inkScale.value = 70; u.inkThr.value = 0.035; } else { u.inkFar.value = Math.max(900, AERIAL.dist * 2.2); u.inkScale.value = AERIAL.dist * 6; u.inkThr.value = 0.011; } u.tex.value = P.rt.texture; u.blur.value = P.b.texture; u.bloom.value = P.ba.texture; u.depthTex.value = P.rt.depthTexture; u.focus.value = focusDist; u.near.value = R3.cam.near; u.far.value = R3.cam.far;
+  const u = P.comp.uniforms; if (G.mode === 'drive') { u.inkFar.value = 900; u.inkScale.value = 70; u.inkThr.value = 0.035; } else { u.inkFar.value = Math.max(900, AERIAL.dist * 2.2); u.inkScale.value = AERIAL.dist * 6; u.inkThr.value = 0.011; } if (R3.trafficMesh) u.inkNear.value.copy(R3.trafficMesh.material.uniforms.nearF.value); u.tex.value = P.rt.texture; u.blur.value = P.b.texture; u.bloom.value = P.ba.texture; u.depthTex.value = P.rt.depthTexture; u.focus.value = focusDist; u.near.value = R3.cam.near; u.far.value = R3.cam.far;
   P.quad.material = P.comp; rd.setRenderTarget(null); rd.render(P.scene, P.cam);
 }
 // ---------- per frame: the car's picture, the shadow, the camera ----------

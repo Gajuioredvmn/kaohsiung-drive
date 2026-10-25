@@ -205,6 +205,16 @@ function buildNature() {
   }
   for (const H of HILLS) { const n = Math.round(H.rx * H.rz / 420); for (let i = 0; i < n; i++) { const a = r() * TAU, d = Math.sqrt(r()) * 0.9, x = H.x + Math.cos(a) * d * H.rx, z = H.z + Math.sin(a) * d * H.rz; const h = terrainH(x, z); if (h > 4 && groundKind(x, z) !== GK.water && !nearRoad(x, z, 6)) addProp(r() < 0.15 ? 'tall' : 'tree' + r.int(0, 2), x, z, { s: 0.9 + r() * 0.7 }); } }
   for (let i = 0; i < 300; i++) { const [x, z] = R2([-1636 + r() * 1018, -1964 + r() * 836]); if (groundKind(x, z) !== GK.water && !nearRoad(x, z, 6) && !inLot(x, z, 4) && Math.hypot(x - MAP.landmarks.龍虎塔[0], z - MAP.landmarks.龍虎塔[1]) > 40) addProp(r() < 0.3 ? 'palm' + r.int(0, 1) : 'tree' + r.int(0, 2), x, z, { s: 0.9 + r() * 0.5 }); }
+  // the big parks out of town: woods round 澄清湖, trees on the lawn before the high-speed rail station
+  for (const [pi, n] of [[3, 1500], [4, 90]]) {
+    const P = MAP.parks[pi]; if (!P) continue; let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const [x, z] of P) { x0 = Math.min(x0, x); z0 = Math.min(z0, z); x1 = Math.max(x1, x); z1 = Math.max(z1, z); }
+    for (let i = 0, placed = 0; i < n * 4 && placed < n; i++) {
+      const x = x0 + r() * (x1 - x0), z = z0 + r() * (z1 - z0); if (!pointInPoly(P, x, z) || groundKind(x, z) === GK.water || nearRoad(x, z, 7) || inLot(x, z, 4)) continue;
+      // in clumps: a tree is likelier near the last one
+      addProp(r() < 0.12 ? 'palm' + r.int(0, 1) : r() < 0.25 ? 'tall' : 'tree' + r.int(0, 2), x, z, { s: 0.85 + r() * 0.6 }); placed++;
+      for (let k = 0; k < 3 && placed < n; k++) { const a = r() * TAU, d = 6 + r() * 10, xx = x + Math.cos(a) * d, zz = z + Math.sin(a) * d; if (pointInPoly(P, xx, zz) && groundKind(xx, zz) !== GK.water && !nearRoad(xx, zz, 7)) { addProp('tree' + r.int(0, 2), xx, zz, { s: 0.8 + r() * 0.5 }); placed++; } }
+    }
+  }
   // 旗津's houses along the island road: low, old, tiled
   for (const e of MAP.edges) {
     if (e.kind !== 'rural' || !e.strip) continue;

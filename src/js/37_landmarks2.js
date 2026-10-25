@@ -36,7 +36,7 @@ function buildAirport() {
   box(x + 160, 44, z - 157, 0, 14, 7, 14, g, g, white, null, 0, 0); addSolid({ x: x + 160, z: z - 150, r: 4 });
   // the jets: white tubes with a tail fin and swept wings
   for (let k = 0; k < 5; k++) { const px = x - 180 + k * 90, pz = z - 30, yaw = Math.PI; jet(px, pz, yaw); }
-  for (let k = 0; k < 3; k++) { const px = x - 350 + k * 70; box(px, 0.1, z - 200, 0, 50, 16, 40, T('wh' + (k % 4)), T('wh' + ((k + 1) % 4)), T('tin1'), null, 8, 8); boxSolid(px, z - 160, 0, 50, 40); }
+  for (let k = 0; k < 3; k++) { const px = x - 350 + k * 70; box(px, 0.1, z - 200, 0, 50, 16, 40, T('shed' + (k % 4)), T('shed' + ((k + 1) % 4)), T('tin1'), null, 8, 8); boxSolid(px, z - 160, 0, 50, 40); }
   sign(x - 300, z - 70, 0, '高雄國際機場', 0xffffff, 0x1a4a8a);
   MAP.landmarks.小港機場 = [x, z - 90];
 }
@@ -92,7 +92,7 @@ function buildFengshan() {
 function buildSteel() {
   const [x, z] = R2(FAR.中鋼), r = mulberry(99), grey = new THREE.MeshLambertMaterial({ color: 0x7a7e84 }), rust = new THREE.MeshLambertMaterial({ color: 0x8a4a2a });
   for (let k = 0; k < 2; k++) { const px = x - 120 + k * 90; const f = new THREE.Mesh(new THREE.CylinderGeometry(9, 12, 48, 12), rust); f.position.set(px, 24, z - 60); CITY.meshes.push(f); addSolid({ x: px, z: z - 60, r: 12 }); const st = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 3, 80, 8), grey); st.position.set(px + 22, 40, z - 60); CITY.meshes.push(st); addSolid({ x: px + 22, z: z - 60, r: 3 }); }
-  for (let k = 0; k < 4; k++) { const pz = z + 10 + k * 46; box(x, 0.1, pz, 0, 400, 18, 36, T('wh' + (k % 4)), T('wh' + ((k + 2) % 4)), T('tin1'), null, 8, 8); boxSolid(x, pz + 36, 0, 400, 36); }
+  for (let k = 0; k < 4; k++) { const pz = z + 10 + k * 46; box(x, 0.1, pz, 0, 400, 18, 36, T('shed' + (k % 4)), T('shed' + ((k + 2) % 4)), T('tin1'), null, 8, 8); boxSolid(x, pz + 36, 0, 400, 36); }
   for (let k = 0; k < 6; k++) { const px = x + 120 + k * 30; const heap = new THREE.Mesh(new THREE.ConeGeometry(14, 12, 10), new THREE.MeshLambertMaterial({ color: k % 2 ? 0x3a3630 : 0x6a4a30 })); heap.position.set(px, 6, z - 80); CITY.meshes.push(heap); addSolid({ x: px, z: z - 80, r: 13 }); }
   for (let k = 0; k < 3; k++) { const px = x - 200 + k * 40; const st = new THREE.Mesh(new THREE.CylinderGeometry(2, 2.5, 60, 8), grey); st.position.set(px, 30, z + 120); CITY.meshes.push(st); addSolid({ x: px, z: z + 120, r: 3 }); }
   sign(x - 150, z - 110, 0, '中鋼', 0xffffff, 0x3a3a3a);
@@ -125,7 +125,7 @@ function buildIndustry() {
     for (let z = z0 + 4; z < z1 - 30; z += 44) for (let x = x0 + 4; x < x1 - 30; x += 56) {
       if (r() < 0.3 || !pointInPoly(inner, x, z) || !pointInPoly(inner, x + 48, z + 36) || inLot(x + 24, z + 18, 4)) continue;
       const w = 40 + r() * 12, d = 28 + r() * 10, h = 9 + r() * 7, y0 = terrainH(x + w / 2, z + d / 2);
-      box(x + w / 2, y0, z + d, 0, w, h, d, T('wh' + r.int(0, 3)), T('wh' + r.int(0, 3)), T('tin' + r.int(0, 2)), null, 8, 8); addSolid({ x: x + w / 2, z: z + d / 2, yaw: 0, hx: w / 2, hz: d / 2 }); n++;
+      box(x + w / 2, y0, z + d, 0, w, h, d, T('shed' + r.int(0, 3)), T('shed' + r.int(0, 3)), T('tin' + r.int(0, 2)), null, 8, 8); addSolid({ x: x + w / 2, z: z + d / 2, yaw: 0, hx: w / 2, hz: d / 2 }); n++;
       if (r() < 0.25) { box(x + w + 3, y0, z + d, 0, 2.2, 26 + r() * 14, 2.2, T('grey'), T('grey'), T('grey')); addSolid({ x: x + w + 3, z: z + d - 1, r: 1.4 }); }
     }
   }

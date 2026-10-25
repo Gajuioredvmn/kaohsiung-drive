@@ -9,6 +9,7 @@ const CAR_REAR = 1.3;                      // the rear wheels' contact line lies
 function carPal(col) {
   // six steps from shadow to highlight, saturated, the way arcade sprites are coloured
   const pale = ((col >> 16) & 255) + ((col >> 8) & 255) + (col & 255) > 600;
+  if (STYLE.toon && pale) return [shadeHex(col, 0.5), shadeHex(col, 0.74), shadeHex(col, 0.87), col, mixHex(col, 0xffffff, 0.5), 0xffffff];
   return pale ? [0x40465a, 0x6c7284, 0x9aa0ae, col, mixHex(col, 0xffffff, 0.6), 0xffffff]
     : [shadeHex(col, 0.4), shadeHex(col, 0.6), shadeHex(col, 0.82), col, mixHex(col, 0xffffff, 0.3), mixHex(col, 0xffffff, 0.6)];
 }
@@ -82,7 +83,7 @@ function carMetrics(spec) { return { BW: Math.round(spec.W * CPX) }; }
 // set further back and lower and aimed at the car's middle, and the front wheels and the nose painted since they show
 function paintCarRear(spec, steer, brake, phase, opt) {
   const O = opt || {}, CW = O.W || CFW, CH = O.H || CFH, GY = O.gy || CGY, D = O.D || CAM_S.D, HC = O.camH || CAM_S.H, PV = O.pivot || 0;
-  const px = STYLE.toon && O.ppm ? Object.assign(new VPix(CW, CH, 1.5), { olw: 1.8 }) : new Pix(CW, CH), cx = CW / 2, P = carPal(spec.color), G = carGeo(spec);
+  const px = STYLE.toon && O.ppm ? Object.assign(new VPix(CW, CH, 1.5), { olw: 1.8, edge: 0.4, edgeCol: 'rgba(43,34,51,0.8)' }) : new Pix(CW, CH), cx = CW / 2, P = carPal(spec.color), G = carGeo(spec);
   const yaw = O.yaw == null ? CAR_YAW[steer + 2] : O.yaw, cy = Math.cos(yaw), sy = Math.sin(yaw), turn = O.yaw != null;
   const zT = G.secs[0].z, f = O.ppm ? O.ppm * D : CPX * (D + zT), Y0s = GY - (HC * f) / D;
   const chrome = !!spec.chrome, interior = spec.interior, crew = CREW[spec.id] || [];

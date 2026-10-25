@@ -5,6 +5,8 @@
 // Nothing is lit: the tones are a palette, the way sprite artists coloured cars, and the outline closes the shape.
 function solidPal(col) {
   const pale = ((col >> 16) & 255) + ((col >> 8) & 255) + (col & 255) > 600;
+  // the illustrated style shades a pale body gently, so a white bus still reads white from the side
+  if (STYLE.toon) return pale ? [shadeHex(col, 0.5), shadeHex(col, 0.76), shadeHex(col, 0.88), col, mixHex(col, 0xffffff, 0.5), 0xffffff] : [shadeHex(col, 0.45), shadeHex(col, 0.66), shadeHex(col, 0.84), col, mixHex(col, 0xffffff, 0.28), mixHex(col, 0xffffff, 0.55)];
   return pale ? [0x40465a, 0x6c7284, 0x9aa0ae, col, mixHex(col, 0xffffff, 0.6), 0xffffff]
     : [shadeHex(col, 0.4), shadeHex(col, 0.6), shadeHex(col, 0.82), col, mixHex(col, 0xffffff, 0.3), mixHex(col, 0xffffff, 0.6)];
 }
@@ -14,7 +16,7 @@ function rectSec(z, hw, y0, y1, o) { o = o || {}; const r = Math.min(o.r || 0, h
 function boxPart(hw, y0, y1, z0, z1, col, o) { return Object.assign({ secs: [rectSec(z0, hw, y0, y1, o), rectSec(z1, hw, y0, y1, o)], col }, o || {}); }
 function solidRender(model, o) {
   // o: { yaw, D, H, ppm, W, Hpx, gy, outline }  model: { parts: [...], extras: [fn(ctx)], tyres: [...] }
-  const px = STYLE.toon ? Object.assign(new VPix(o.W, o.Hpx, 1.4), { olw: 1.5 }) : new Pix(o.W, o.Hpx), cx = o.W / 2, cy = Math.cos(o.yaw), sy = Math.sin(o.yaw), f = o.ppm * o.D, Y0s = o.gy - (o.H * f) / o.D, PV = o.pivot || 0;
+  const px = STYLE.toon ? Object.assign(new VPix(o.W, o.Hpx, 1.4), { olw: 1.5, edge: 0.42, edgeCol: 'rgba(43,34,51,0.85)' }) : new Pix(o.W, o.Hpx), cx = o.W / 2, cy = Math.cos(o.yaw), sy = Math.sin(o.yaw), f = o.ppm * o.D, Y0s = o.gy - (o.H * f) / o.D, PV = o.pivot || 0;
   const pr = (x, y, z) => { const X = x * cy + (z - PV) * sy, d = -x * sy + (z - PV) * cy + o.D; return [cx + (X * f) / d, Y0s - ((y - o.H) * f) / d, d]; };
   // the camera in model space: behind the pivot by D along the view, up H
   const cam = { x: o.D * sy, y: o.H, z: PV - o.D * cy };

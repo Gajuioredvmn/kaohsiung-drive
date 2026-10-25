@@ -39,7 +39,7 @@ function spawnWalker(r) {
     const l = PEO.loops[r.int(0, PEO.loops.length - 1)]; if (l.len < 20 || l.people >= 1 + l.len / 50) continue;
     const s = r() * l.len, p = polyAt(l.pts, s), d = Math.hypot(p.x - C.x, p.z - C.z); if (d < 25 || d > PEO.near) continue;
     if (d < 180 && R3.cam && G.mode === 'drive' && G.t > 1) { const dx = p.x - R3.cam.position.x, dz = p.z - R3.cam.position.z, L = Math.hypot(dx, dz) || 1; if ((dx * Math.sin(CAMV.az) + dz * Math.cos(CAMV.az)) / L > 0.5) continue; }
-    const w = { loop: l, s, dir: r() < 0.5 ? 1 : -1, v: 1.0 + r() * 0.7, kind: 'person' + r.int(0, 7), x: p.x, z: p.z, y: 0, yaw: 0, side: (r() - 0.5) * 1.6, cross: null, cs: 0, wait: 0, knocked: 0, dodge: 0, anim: r() * 10, id: Math.random() };
+    const w = { loop: l, s, dir: r() < 0.5 ? 1 : -1, v: 1.0 + r() * 0.7, kind: 'person' + r.int(0, STYLE.toon ? TPEOPLE.length - 1 : 7), x: p.x, z: p.z, y: 0, yaw: 0, side: (r() - 0.5) * 1.6, cross: null, cs: 0, wait: 0, knocked: 0, dodge: 0, anim: r() * 10, id: Math.random() };
     l.people++; PEO.list.push(w); walkerPose(w); return w;
   }
 }

@@ -36,7 +36,7 @@ class VPix {
   }
   _path(pts) { const g = this.g; g.beginPath(); g.moveTo(pts[0], pts[1]); for (let k = 2; k < pts.length; k += 2) g.lineTo(pts[k], pts[k + 1]); g.closePath(); }
   // the stroke in the shape's own colour closes the hairline seams between neighbouring faces
-  poly(pts, c) { if (pts.length < 6) return; this._fill(c); const g = this.g; this._path(pts); g.fill(); g.strokeStyle = cssHex(c); g.lineWidth = 0.9 / this.s; g.stroke(); }
+  poly(pts, c) { if (pts.length < 6) return; this._fill(c); const g = this.g; this._path(pts); g.fill(); if (this.edge) { g.strokeStyle = this.edgeCol || INK; g.lineWidth = this.edge; } else { g.strokeStyle = cssHex(c); g.lineWidth = 0.9 / this.s; } g.stroke(); }
   polyD(pts, a, b, t) { this.poly(pts, t == null || t > 0.5 ? b : a); }
   line(x0, y0, x1, y1, c, w) { const g = this.g; this._snap = null; g.strokeStyle = cssHex(c); g.lineWidth = Math.max(1, w || 1); g.beginPath(); g.moveTo(x0 + 0.5, y0 + 0.5); g.lineTo(x1 + 0.5, y1 + 0.5); g.stroke(); }
   curve(x0, y0, cx, cy, x1, y1, c, w0, w1, cb) {
