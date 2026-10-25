@@ -11,7 +11,7 @@ function uiInit() {
     <div class="title-wrap"><div class="logo"><span class="logo-tc">港都漫遊</span><span class="logo-en">KAOHSIUNG DRIVE</span><span class="logo-yr">高雄・開放世界　${STYLE.toon ? '插畫風' : 'HD-2D'}</span></div>
       <div class="tap" id="tap">點一下開始　TAP TO START</div>
       <div class="menu" id="menu" hidden><button class="btn big" data-go="select">選車出發</button><button class="btn" data-act="god">俯瞰高雄</button><button class="btn" data-go="settings">設定</button></div></div>
-    <div class="foot">左右傾斜手機轉向・右手油門煞車・畫面上方左右拖曳轉鏡頭</div>
+    <div class="foot">左右傾斜手機轉向・右手油門煞車・停車後可以下車走路、打人、搶車</div>
   </section>
   <section class="scr dim" id="s-select" hidden>
     <div class="sel">
@@ -24,7 +24,7 @@ function uiInit() {
   </section>
   <section class="scr god" id="s-god" hidden><div class="godbar"><button class="btn" data-act="godback">回選單</button><button class="btn" data-act="godspin">轉一下</button></div></section>
   <section class="scr dim" id="s-settings" hidden><div class="panel card" id="settings"></div></section>
-  <section class="scr dim" id="s-pause" hidden><div class="panel vmenu"><h2 class="ttl" style="text-align:center">暫停</h2><button class="btn big" data-act="resume">繼續</button><button class="btn" data-act="road">回到路上</button><button class="btn" data-act="quit">放棄任務</button><button class="btn" data-act="recenter">方向盤歸零</button><button class="btn" data-go="settings">設定</button><button class="btn ghost" data-act="title">回標題</button></div></section>`;
+  <section class="scr dim" id="s-pause" hidden><div class="panel vmenu"><h2 class="ttl" style="text-align:center">暫停</h2><button class="btn big" data-act="resume">繼續</button><button class="btn" data-act="road">回到路上</button><button class="btn" data-act="newcar">叫一台新車</button><button class="btn" data-act="quit">放棄任務</button><button class="btn" data-act="recenter">方向盤歸零</button><button class="btn" data-go="settings">設定</button><button class="btn ghost" data-act="title">回標題</button></div></section>`;
   document.body.appendChild(h('<div id="rot" class="need"><div style="font-size:44px">⟲</div>請把手機轉成橫向</div>'));
   root.addEventListener('click', onUiClick);
   $('s-title').addEventListener('pointerdown', unlock);
@@ -53,7 +53,8 @@ function onUiClick(e) {
     case 'buy': { const price = carPrice(UI.sel); if (PRO.money >= price) { PRO.money -= price; PRO.owned.push(CARS[UI.sel].id); saveProgress(); sfxChime(); openSelect(); } break; }
     case 'quit': cancelJob(); onPausePressed(); break;
     case 'resume': onPausePressed(); break;
-    case 'road': carToRoad(); onPausePressed(); break;
+    case 'road': if (HERO.on) heroToRoad(); else carToRoad(); onPausePressed(); break;
+    case 'newcar': callCar(); onPausePressed(); break;
     case 'recenter': tiltRecenter(); onPausePressed(); break;
     case 'title': G.paused = false; engineStop(); driveEnd(); aerialEnter(false); show('title'); break;
   }

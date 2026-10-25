@@ -11,8 +11,9 @@ const FARES = [['阿嬤', '少年欸，載我去{d}，慢慢開就好'], ['上�
 const ORDERS = [['珍珠奶茶 6 杯', '手搖店'], ['雞排便當 4 個', '便當店'], ['木瓜牛奶 3 杯', '果汁攤'], ['滷味一大包', '滷味攤'], ['蚵仔煎 2 份', '夜市'], ['鹹酥雞', '炸物店'], ['牛肉麵 2 碗', '麵店'], ['豆花 5 碗', '豆花店']];
 // a roadside spot: a lane point on a proper road, kerb side, between r0 and r1 metres from a point
 function roadSpot(x0, z0, r0, r1, r) {
-  for (let t = 0; t < 40; t++) {
-    const l = TR.lanes[r.int(0, TR.lanes.length - 1)]; if (l.e.K.cls < 1 || l.e.lvl || l.k !== l.nPer - 1 || l.len < 40) continue;
+  const K = TR.cand && TR.cand.list.length ? TR.cand : null;
+  for (let t = 0; t < 60; t++) {
+    const l = K && t < 50 ? candPick(K, r) : TR.lanes[r.int(0, TR.lanes.length - 1)]; if (l.e.K.cls < 1 || l.e.lvl || l.k !== l.nPer - 1 || l.len < 40) continue;
     const s = 12 + r() * (l.len - 24), p = polyAt(l.pts, s), d = Math.hypot(p.x - x0, p.z - z0); if (d < r0 || d > r1) continue;
     const rx_ = Math.cos(p.yaw), rz_ = -Math.sin(p.yaw), off = l.laneW / 2 - 0.4;
     return { x: p.x + rx_ * off, z: p.z + rz_ * off, yaw: p.yaw, lane: l, s };
@@ -22,11 +23,12 @@ function roadSpot(x0, z0, r0, r1, r) {
 function landmarkSpot(name) { const L = MAP.landmarks[name]; if (!L) return null; const n = nearestRoad(L[0], L[1]); if (!n || n.d > 120) return null; const rx_ = Math.cos(n.yaw), rz_ = -Math.sin(n.yaw); return { x: n.x + rx_ * (n.e.w / 2 - 2), z: n.z + rz_ * (n.e.w / 2 - 2), yaw: n.yaw, name }; }
 const _mr = mulberry(9001);
 function missionsTick(dt) {
-  const C = CAR, r = _mr;
+  const C = plr(), r = _mr;
   // keep three jobs on offer within reach
   MIS.spawnT -= dt;
   MIS.avail = MIS.avail.filter((m) => Math.hypot(m.x - C.x, m.z - C.z) < 700);
   if (!MIS.active && MIS.avail.length < 3 && MIS.spawnT <= 0) { MIS.spawnT = 0.5; const m = makeJob(r); if (m) MIS.avail.push(m); }
+  if (HERO.on) { if (MIS.active) { MIS.active.t += dt; if (MIS.active.t > MIS.active.limit) finishJob(false); } return; }   // jobs are done at the wheel
   if (!MIS.active) {
     for (let i = 0; i < MIS.avail.length; i++) { const m = MIS.avail[i]; if (Math.hypot(m.x - C.x, m.z - C.z) < 6 && C.kmh < 25) { MIS.avail.splice(i, 1); startJob(m); break; } }
     return;
@@ -40,7 +42,7 @@ function missionsTick(dt) {
   if (A.t > A.limit) finishJob(false);
 }
 function makeJob(r) {
-  const C = CAR, u = r(), spot = roadSpot(C.x, C.z, 120, 420, r); if (!spot) return null;
+  const C = plr(), u = r(), spot = roadSpot(C.x, C.z, 120, 420, r); if (!spot) return null;
   if (u < 0.5) {
     const dn = DEST_NAMES[r.int(0, DEST_NAMES.length - 1)], dest = landmarkSpot(dn) || roadSpot(spot.x, spot.z, 600, 1300, r); if (!dest) return null;
     const dist = Math.hypot(dest.x - spot.x, dest.z - spot.z); if (dist < 300) return null;
@@ -90,7 +92,7 @@ function graphPath(x0, z0, x1, z1) {
 }
 // ---------- what the HUD draws for a job ----------
 function missionsHud(W, H) {
-  const C = CAR;
+  const C = plr();
   otext('$ ' + PRO.money.toLocaleString(), W - 14, 94, 18, '#ffd23a', null, 'right', '#0a1028', 3);
   const A = MIS.active;
   if (!A) {
@@ -105,6 +107,6 @@ function missionsHud(W, H) {
   otext(Math.round(A.dist) + ' m　　' + (A.kind === 'trial' ? A.t.toFixed(1) + ' s' : '剩 ' + Math.ceil(left) + ' s'), W / 2, 64, 14, col, null, 'center', '#0a1028', 2);
 }
 function arrowTo(W, H, tx, tz) {
-  const C = CAR, a = Math.atan2(tx - C.x, tz - C.z) - CAMV.az, x = W / 2, y = 24;
+  const C = plr(), a = Math.atan2(tx - C.x, tz - C.z) - CAMV.az, x = W / 2, y = 24;
   hud.save(); hud.translate(x, y); hud.rotate(-a); hud.fillStyle = '#ffd23a'; hud.strokeStyle = '#0a1028'; hud.lineWidth = 2; hud.beginPath(); hud.moveTo(0, -11); hud.lineTo(8, 7); hud.lineTo(0, 3); hud.lineTo(-8, 7); hud.closePath(); hud.fill(); hud.stroke(); hud.restore();
 }

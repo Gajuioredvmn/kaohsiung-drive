@@ -35,7 +35,7 @@ function loopNear(x, z) {
 function walkSignal(c) { return signalState(c.node, c.phase) === 'red'; }   // the road's traffic is held: walk
 const _pr = mulberry(777);
 function spawnWalker(r) {
-  const C = CAR, K = (PEO.cand = nearCands(PEO.loops, PEO.near + 40, PEO.cand, 20)); if (!K.list.length) return; let tries = 0;
+  const C = plr(), K = (PEO.cand = nearCands(PEO.loops, PEO.near + 40, PEO.cand, 20)); if (!K.list.length) return; let tries = 0;
   while (tries++ < 10) {
     const l = candPick(K, r); if (l.people >= 1 + l.len / PEO.per) continue;
     const s = r() * l.len, p = polyAt(l.pts, s), d = Math.hypot(p.x - C.x, p.z - C.z); if (d < 25 || d > PEO.near) continue;
@@ -49,19 +49,28 @@ function spawnWalker(r) {
 function walkerPose(w) {
   if (w.cross) { const c = w.cross, t = clamp(w.cs / c.len, 0, 1), fx = w.cend === 'A' ? c.A : c.B, tx = w.cend === 'A' ? c.B : c.A; w.x = lerp(fx[0], tx[0], t); w.z = lerp(fx[1], tx[1], t); w.yaw = Math.atan2(tx[0] - fx[0], tx[1] - fx[1]); }
   else { const p = pathAt(w.loop, w.s), rx_ = Math.cos(p.yaw), rz_ = -Math.sin(p.yaw); w.x = p.x + rx_ * w.side; w.z = p.z + rz_ * w.side; w.yaw = w.dir > 0 ? p.yaw : p.yaw + Math.PI; }
+  if (w.knocked > 0 && w.ko) { w.x += w.ko[0]; w.z += w.ko[1]; } else if (w.ko && !(w.knocked > 0)) w.ko = null;   // knocked back a step, while down
   if (!(Math.abs(w.x - w.gx) + Math.abs(w.z - w.gz) < 1)) { w.y = terrainH(w.x, w.z) + 0.14; w.gx = w.x; w.gz = w.z; }   // (the ground again only every metre)
 }
 function peopleTick(dt) {
-  const C = CAR, r = _pr;
+  const C = CAR, P = plr(), r = _pr, driving = !HERO.on;
   PEO.spawnT -= dt; if (PEO.list.length < PEO.max && PEO.spawnT <= 0) { PEO.spawnT = 0.05; spawnWalker(r); }
   const pv = Math.hypot(C.vx, C.vy), hx = Math.sin(C.yaw), hz = Math.cos(C.yaw);
   for (let i = PEO.list.length - 1; i >= 0; i--) {
-    const w = PEO.list[i], dx = w.x - C.x, dz = w.z - C.z, d2 = dx * dx + dz * dz;
-    if (d2 > PEO.far * PEO.far) { w.loop.people--; PEO.list.splice(i, 1); continue; }
-    w.anim += dt * (w.v + 1);
+    const w = PEO.list[i], px_ = w.x - P.x, pz_ = w.z - P.z, dx = w.x - C.x, dz = w.z - C.z, d2 = dx * dx + dz * dz;
+    if (px_ * px_ + pz_ * pz_ > PEO.far * PEO.far) { w.loop.people--; PEO.list.splice(i, 1); continue; }
+    const fleeing = w.flee > 0;
+    w.anim += dt * ((fleeing ? 3.6 : w.v) + 1);
     if (w.knocked > 0) { w.knocked -= dt; walkerPose(w); continue; }
+    // running from trouble: along the pavement, away from it, fast
+    if (fleeing) {
+      w.flee -= dt; w.wait = 0; w.dodge = 0;
+      if (w.cross) { w.cs += 3.6 * dt; if (w.cs >= w.cross.len) { const c = w.cross, to = w.cend === 'A' ? c.lb : c.la; w.loop.people--; w.loop = to.loop; w.loop.people++; w.s = to.s; w.cross = null; } walkerPose(w); continue; }
+      if (w.fleeDir == null) { const p = pathAt(w.loop, w.s), tx = Math.sin(p.yaw), tz = Math.cos(p.yaw); w.fleeDir = (w.x - w.fx) * tx + (w.z - w.fz) * tz >= 0 ? 1 : -1; w.dir = w.fleeDir; }
+      w.s += 3.6 * w.dir * dt; const L = w.loop.len; if (w.s < 0) w.s += L; if (w.s >= L) w.s -= L; walkerPose(w); continue;
+    }
     // the car coming: hop aside, then stand a moment
-    if (d2 < 10 * 10 && pv > 1.5 && Math.abs(w.y - C.y) < 3) {
+    if (driving && d2 < 10 * 10 && pv > 1.5 && Math.abs(w.y - C.y) < 3) {
       const ahead = dx * hx + dz * hz, lat = dx * hz - dz * hx;
       if (ahead > 0 && ahead < 10 && Math.abs(lat) < 2.6 && w.dodge <= 0) { w.dodge = 1.2; w.dodgeDir = lat >= 0 ? 1 : -1; }
     }
@@ -86,10 +95,10 @@ function peopleTick(dt) {
 }
 // a walker hit by the car is knocked over (and the car feels a bump)
 function peopleCollide() {
-  const C = CAR; if (C.ghost || !C.P) return; const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), hl = C.P.L * 0.55, hw = C.P.W * 0.5;
-  for (const w of PEO.list) {
+  const C = CAR; if (C.ghost || !C.P || HERO.on) return; const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), hl = C.P.L * 0.55, hw = C.P.W * 0.5;
+  for (const w of PEO.list.concat(FREEW)) {
     const dx = w.x - C.x, dz = w.z - C.z; if (dx * dx + dz * dz > 16 || w.knocked > 0 || Math.abs(w.y - C.y) > 3) continue;
     const lu = dx * cy - dz * sy, lv = dx * sy + dz * cy;   // across, along the car
-    if (Math.abs(lu) < hw + 0.3 && Math.abs(lv) < hl + 0.3) { w.knocked = 3.5; w.x += sy * 2.5 + (Math.random() - 0.5); w.z += cy * 2.5 + (Math.random() - 0.5); C.vx *= 0.93; if (typeof onPersonHit === 'function') onPersonHit(); }
+    if (Math.abs(lu) < hw + 0.3 && Math.abs(lv) < hl + 0.3) { w.knocked = 3.5; const kx = sy * 2.5 + (Math.random() - 0.5), kz = cy * 2.5 + (Math.random() - 0.5); if (w.free) { w.x += kx; w.z += kz; } else w.ko = [kx, kz]; C.vx *= 0.93; scareNear(w.x, w.z, 18); if (typeof onPersonHit === 'function') onPersonHit(); }
   }
 }

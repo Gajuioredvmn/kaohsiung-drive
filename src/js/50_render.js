@@ -27,28 +27,29 @@ const SHADOW_GLSL = `
     return mix(1.0, s * 0.25, edge);
   }`;
 const BILLBOARD_VS = `
-  attribute vec3 iPos; attribute vec2 iSize; attribute vec4 iUV; attribute float iFlip; attribute float iFade;
-  varying vec2 vUv; varying float vFog; varying vec4 vShadow; varying float vFade;
+  attribute vec3 iPos; attribute vec2 iSize; attribute vec4 iUV; attribute float iFlip; attribute float iFade; attribute float iTone;
+  varying vec2 vUv; varying float vFog; varying vec4 vShadow; varying float vFade; varying float vTone;
   uniform vec3 camPos; uniform mat4 shadowMat;
   void main() {
     vec3 toCam = camPos - iPos; toCam.y = 0.0; vec3 fwd = normalize(toCam); vec3 right = vec3(fwd.z, 0.0, -fwd.x);
     vec3 up = vec3(0.0, 1.0, 0.0);
     if (iPos.y > 300.0) { vec3 f = normalize(camPos - iPos); right = normalize(cross(up, f)); up = cross(f, right); }   // the clouds face the camera fully, so they read from above too
     vec3 p = iPos + right * (position.x * iSize.x) + up * ((position.y + 0.5) * iSize.y);
-    float u = iFlip > 0.5 ? 1.0 - uv.x : uv.x; vFade = iFade;
+    float u = iFlip > 0.5 ? 1.0 - uv.x : uv.x; vFade = iFade; vTone = iTone;
     vUv = vec2(mix(iUV.x, iUV.z, u), mix(iUV.y, iUV.w, uv.y));
     vShadow = shadowMat * vec4(iPos + vec3(0.0, 0.4 + (position.y + 0.5) * iSize.y * 0.15, 0.0), 1.0);
     vec4 mv = modelViewMatrix * vec4(p, 1.0); vFog = -mv.z; gl_Position = projectionMatrix * mv;
   }`;
 const BILLBOARD_FS = `
   precision mediump float; uniform sampler2D map; uniform vec3 tint; uniform vec3 fogColor; uniform float fogNear, fogFar;
-  varying vec2 vUv; varying float vFog; varying float vFade;` + SHADOW_GLSL + `
+  varying vec2 vUv; varying float vFog; varying float vFade; varying float vTone;` + SHADOW_GLSL + `
   uniform float propK; uniform vec2 nearF;
   void main() { vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard;
     // right by the camera a sprite would fill the screen with a blur: it thins out in a fine dither instead
     // (and one that has only just come into view thins in the same way)
-    float nf = smoothstep(nearF.x, nearF.y, vFog) * vFade; if (nf < 0.999 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) > nf) discard;
-    float sh = mix(0.5, 1.0, shadowAt(0.6)); float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(c.rgb * tint * sh * propK, fogColor, f), 1.0); }`;
+    // (an ordered 4x4 screen reads as see-through; scattered noise read as dirt)
+    float nf = smoothstep(nearF.x, nearF.y, vFog) * vFade; if (nf < 0.999) { vec2 a = floor(gl_FragCoord.xy), h = floor(a * 0.5); float b = fract(dot(h, vec2(0.5, h.y * 0.75))) * 0.25 + fract(dot(a, vec2(0.5, a.y * 0.75))); if (b + 0.03 > nf) discard; }
+    float sh = mix(0.5, 1.0, shadowAt(0.6)); float f = smoothstep(fogNear, fogFar, vFog); gl_FragColor = vec4(mix(c.rgb * tint * sh * propK * vTone, fogColor, f), 1.0); }`;
 // the city's shaders: a tile rectangle per vertex (or per box face), repeated with fract, lit by the sun direction
 // the tile repeats with fract(); the mip level comes from the unbroken uv, so the seams between repeats do not blur
 const CITY_FS = `
@@ -129,7 +130,7 @@ function r3Init() {
   scene.fog = new THREE.Fog(R3.tod.fog, FOG_NEAR, FOG_FAR); scene.background = new THREE.Color(R3.tod.sky);
   R3.cam = new THREE.PerspectiveCamera(42, 16 / 9, 0.6, 2600);
   R3.sun = new THREE.Vector3(...R3.tod.sun).normalize();
-  r3ShadowInit(); r3Ground(); r3Water(); r3Sky(); r3Horizon(); r3Atlas(); r3City(); r3Props(); r3Traffic(); r3Shadow(); r3Marks(); if (STYLE.toon) r3LightsInit();
+  r3ShadowInit(); r3Ground(); r3Water(); r3Sky(); r3Horizon(); r3Atlas(); r3City(); r3Props(); r3Traffic(); r3Hero(); r3Marks(); if (STYLE.toon) r3LightsInit();
   for (const m of CITY.meshes || []) scene.add(m);
   // the finish needs a depth texture: WebGL2 (every modern phone); otherwise the plain picture
   if (rd.capabilities.isWebGL2) { try { r3Post(); } catch (e) { R3.post = null; reportErr('post: ' + e.message); } } else R3.postOff = 'WebGL1';
@@ -199,17 +200,18 @@ function r3ShadowInit() {
   R3.shadowRT = rt; R3.sunCam = new THREE.OrthographicCamera(-SHADOW_R, SHADOW_R, SHADOW_R, -SHADOW_R, 10, 1500); R3.shadowMat = R3.shadowMat || new THREE.Matrix4();
 }
 function r3ShadowMats() { return [R3.geoMat, R3.topMat, R3.boxMat, R3.ground && R3.ground.material, R3.propMesh && R3.propMesh.material, R3.trafficMesh && R3.trafficMesh.material, R3.peopleMesh && R3.peopleMesh.material].filter((m) => m && m.uniforms && m.uniforms.shadowOn); }
+function r3VehQuads() { const out = []; for (const S of [CAR.slot, CAR.slotP, ...PARK.map((p) => p.slot), ...PARK.map((p) => p.slotP)]) if (S) out.push(S.mesh, S.shadow); if (R3.hero) out.push(R3.hero.mesh, R3.hero.shadow); return out; }
 function r3ShadowPass() {
   const rd = R3.renderer, on = R3.shadowRT && SET.quality === 'high' && R3.sun.y > 0.15 && G.mode === 'drive';
   for (const m of r3ShadowMats()) { m.uniforms.shadowOn.value = 0; m.uniforms.shadowMap.value = null; }   // (the map must not be bound while it is being drawn)
   if (!on) return;
   // the box of shadow sits ahead of the camera; its corner snaps to the map's texels so the edges do not crawl
-  const C = CAR, cam = R3.cam, look = Math.atan2(cam.position.x - C.x, cam.position.z - C.z) + Math.PI, texel = (2 * SHADOW_R) / SHADOW_SIZE;
+  const C = plr(), cam = R3.cam, look = Math.atan2(cam.position.x - C.x, cam.position.z - C.z) + Math.PI, texel = (2 * SHADOW_R) / SHADOW_SIZE;
   let fx = C.x + Math.sin(look) * SHADOW_R * 0.45, fz = C.z + Math.cos(look) * SHADOW_R * 0.45; fx = Math.round(fx / texel) * texel; fz = Math.round(fz / texel) * texel;
   const sc = R3.sunCam, S = R3.sun; sc.position.set(fx + S.x * 700, S.y * 700, fz + S.z * 700); sc.lookAt(fx, 0, fz); sc.updateMatrixWorld(); sc.updateProjectionMatrix();
   R3.shadowMat.multiplyMatrices(sc.projectionMatrix, sc.matrixWorldInverse);
   // what the sun sees: the chunks round the box, the props, the traffic and the people; not the sky, the car's quad or the glows
-  const hidden = [R3.sky, R3.car, R3.shadow, R3.fxMesh, R3.marks, R3.glows && R3.glows.m, R3.pools && R3.pools.m, R3.horizon, ...(R3.water || [])].filter((m) => m); const was = hidden.map((m) => m.visible); for (const m of hidden) m.visible = false;
+  const hidden = [R3.sky, ...r3VehQuads(), R3.fxMesh, R3.marks, R3.glows && R3.glows.m, R3.pools && R3.pools.m, R3.horizon, ...(R3.water || [])].filter((m) => m); const was = hidden.map((m) => m.visible); for (const m of hidden) m.visible = false;
   for (const e of R3.chunks) { const d = Math.hypot(e.cx - fx, e.cz - fz) - e.r; const vis = d < SHADOW_R * 1.3; for (const m of e.meshes) m.visible = vis; }
   for (const m of [R3.propMesh, R3.trafficMesh, R3.peopleMesh]) if (m) m.material.uniforms.camPos.value.copy(sc.position);
   const fogWas = R3.scene.fog; R3.scene.fog = null;
@@ -382,20 +384,20 @@ function r3Props() {
   const n = PROPS.list.length, pos = new Float32Array(n * 3), size = new Float32Array(n * 2), uv = new Float32Array(n * 4), flip = new Float32Array(n);
   PROPS.list.forEach((p, i) => { const K = PROPS.kinds[p.k]; pos[i * 3] = p.x; pos[i * 3 + 1] = p.y - 0.05; pos[i * 3 + 2] = p.z; size[i * 2] = K.wM * p.s; size[i * 2 + 1] = K.hM * p.s; uv.set(K.uv, i * 4); flip[i] = p.flip ? 1 : 0; });
   const geo = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); geo.instanceCount = n;
-  geo.setAttribute('iPos', new THREE.InstancedBufferAttribute(pos, 3)); geo.setAttribute('iSize', new THREE.InstancedBufferAttribute(size, 2)); geo.setAttribute('iUV', new THREE.InstancedBufferAttribute(uv, 4)); geo.setAttribute('iFlip', new THREE.InstancedBufferAttribute(flip, 1)); geo.setAttribute('iFade', new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1));
+  geo.setAttribute('iPos', new THREE.InstancedBufferAttribute(pos, 3)); geo.setAttribute('iSize', new THREE.InstancedBufferAttribute(size, 2)); geo.setAttribute('iUV', new THREE.InstancedBufferAttribute(uv, 4)); geo.setAttribute('iFlip', new THREE.InstancedBufferAttribute(flip, 1)); geo.setAttribute('iFade', new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1)); geo.setAttribute('iTone', new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1));
   const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, nearF: { value: new THREE.Vector2(0, 0.001) }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.propMesh = m; R3.propUV = geo.getAttribute('iUV'); R3.propTex = tex;
   // the walkers: the same atlas, a mesh of their own whose instances move
   const N = PEO.max, g2 = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g2.instanceCount = 0;
-  const A = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3), size: new THREE.InstancedBufferAttribute(new Float32Array(N * 2), 2), uv: new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4), flip: new THREE.InstancedBufferAttribute(new Float32Array(N), 1), fade: new THREE.InstancedBufferAttribute(new Float32Array(N).fill(1), 1) };
+  const A = { pos: new THREE.InstancedBufferAttribute(new Float32Array((N + 16) * 3), 3), size: new THREE.InstancedBufferAttribute(new Float32Array((N + 16) * 2), 2), uv: new THREE.InstancedBufferAttribute(new Float32Array((N + 16) * 4), 4), flip: new THREE.InstancedBufferAttribute(new Float32Array(N + 16), 1), fade: new THREE.InstancedBufferAttribute(new Float32Array(N + 16).fill(1), 1), tone: new THREE.InstancedBufferAttribute(new Float32Array(N + 16).fill(1), 1) };
   for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
-  g2.setAttribute('iPos', A.pos); g2.setAttribute('iSize', A.size); g2.setAttribute('iUV', A.uv); g2.setAttribute('iFlip', A.flip); g2.setAttribute('iFade', A.fade);
+  g2.setAttribute('iPos', A.pos); g2.setAttribute('iSize', A.size); g2.setAttribute('iUV', A.uv); g2.setAttribute('iFlip', A.flip); g2.setAttribute('iFade', A.fade); g2.setAttribute('iTone', A.tone);
   const m2 = new THREE.Mesh(g2, mat); m2.frustumCulled = false; scene3Add(m2); R3.peopleMesh = m2; R3.peopleA = A;
   // and the little things that change: the countdown digits on the signals, the brake lamps of the traffic
   const N3 = 1600, g3 = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); g3.instanceCount = 0;
-  const B = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 3), 3), size: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 2), 2), uv: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 4), 4), flip: new THREE.InstancedBufferAttribute(new Float32Array(N3), 1) };
+  const B = { pos: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 3), 3), size: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 2), 2), uv: new THREE.InstancedBufferAttribute(new Float32Array(N3 * 4), 4), flip: new THREE.InstancedBufferAttribute(new Float32Array(N3), 1), fade: new THREE.InstancedBufferAttribute(new Float32Array(N3).fill(1), 1), tone: new THREE.InstancedBufferAttribute(new Float32Array(N3).fill(1), 1) };
   for (const a of Object.values(B)) a.setUsage(THREE.DynamicDrawUsage);
-  g3.setAttribute('iPos', B.pos); g3.setAttribute('iSize', B.size); g3.setAttribute('iUV', B.uv); g3.setAttribute('iFlip', B.flip); g3.setAttribute('iFade', new THREE.InstancedBufferAttribute(new Float32Array(N3).fill(1), 1));
+  g3.setAttribute('iPos', B.pos); g3.setAttribute('iSize', B.size); g3.setAttribute('iUV', B.uv); g3.setAttribute('iFlip', B.flip); g3.setAttribute('iFade', B.fade); g3.setAttribute('iTone', B.tone);
   const m3 = new THREE.Mesh(g3, mat); m3.frustumCulled = false; scene3Add(m3); R3.fxMesh = m3; R3.fxA = B; R3.fxMax = N3;
 }
 // the illustrated style's lights: soft banded glows facing the camera, and pools of light laid on the ground (both added on)
@@ -426,9 +428,10 @@ function r3FxUpdate() {
   const m = R3.fxMesh; if (!m) return; const A = R3.fxA, cam = R3.cam.position; let k = 0;
   const GL = R3.glows, PL = R3.pools; if (GL) { GL.n = 0; PL.n = 0; GL.m.material.uniforms.camPos.value.copy(cam); }
   const glowOf = { glow_lamp: [2.4, LAMP_C], glow_head: [0.7, HEAD_C], glow_red: [0.5, TAIL_C] };
-  const put = (name, x, y, z) => {
+  const put = (name, x, y, z, sc, fade) => {
     if (GL && glowOf[name] && (name !== 'glow_red' || R3.todKind !== 'day')) { const [sz, c] = glowOf[name]; lightPut(GL, x, y, z, sz, c); if (name === 'glow_lamp') lightPut(PL, x, y - 6.8, z, 9, POOL_C); return; }
-    if (k >= R3.fxMax) return; const K = PROPS.kinds[name]; if (!K) return; A.pos.array[k * 3] = x; A.pos.array[k * 3 + 1] = y; A.pos.array[k * 3 + 2] = z; A.size.array[k * 2] = K.wM; A.size.array[k * 2 + 1] = K.hM; A.uv.array.set(K.uv, k * 4); A.flip.array[k] = 0; k++; };
+    if (k >= R3.fxMax) return; const K = PROPS.kinds[name]; if (!K) return; A.pos.array[k * 3] = x; A.pos.array[k * 3 + 1] = y; A.pos.array[k * 3 + 2] = z; A.size.array[k * 2] = K.wM * (sc || 1); A.size.array[k * 2 + 1] = K.hM * (sc || 1); A.uv.array.set(K.uv, k * 4); A.flip.array[k] = 0; A.fade.array[k] = fade == null ? 1 : fade; A.tone.array[k] = 1; k++; };
+  for (const q of FXP.list) { const u = q.t / q.life, sc = q.pop ? q.s0 * (0.7 + u * 0.8) : q.s0 * (0.6 + u * 1.3) * (u > 0.7 ? Math.max(0.05, (1 - u) / 0.3) : 1); put(q.kind, q.x, q.y - 0.4 * sc, q.z, sc, 1); }
   for (const s of CITY.signals) {
     const dx = s.x - cam.x, dz = s.z - cam.z; if (dx * dx + dz * dz > 160 * 160) continue;
     // only the side facing the driver shows: the camera must be on the approach side
@@ -445,8 +448,8 @@ function r3FxUpdate() {
   if (R3.todKind === 'night' || R3.todKind === 'dusk') {
     const R = R3.todKind === 'night' ? 170 : 90;
     for (const l of CITY.lamps) { const dx = l.x - cam.x, dz = l.z - cam.z; if (dx * dx + dz * dz < R * R) put('glow_lamp', l.x, l.y, l.z); }
-    const C = CAR; if (!CAMV.fp) { const hx = Math.sin(C.yaw), hz = Math.cos(C.yaw), rx_ = Math.cos(C.yaw), rz_ = -Math.sin(C.yaw), fx = C.x + hx * (C.P.L / 2 + 0.1), fz = C.z + hz * (C.P.L / 2 + 0.1); for (const sd of [-1, 1]) put('glow_head', fx + rx_ * sd * C.P.W * 0.34, C.y + 0.6, fz + rz_ * sd * C.P.W * 0.34); }
-    if (PL && G.mode === 'drive') { const hx = Math.sin(C.yaw), hz = Math.cos(C.yaw); lightPut(PL, C.x + hx * 7, C.y + 0.08, C.z + hz * 7, 4.6, [0.5, 0.47, 0.38]); lightPut(PL, C.x + hx * 12, C.y + 0.08, C.z + hz * 12, 3.4, [0.32, 0.3, 0.24]); }
+    const C = CAR; if (!CAMV.fp && !HERO.on && !C.broken) { const hx = Math.sin(C.yaw), hz = Math.cos(C.yaw), rx_ = Math.cos(C.yaw), rz_ = -Math.sin(C.yaw), fx = C.x + hx * (C.P.L / 2 + 0.1), fz = C.z + hz * (C.P.L / 2 + 0.1); for (const sd of [-1, 1]) put('glow_head', fx + rx_ * sd * C.P.W * 0.34, C.y + 0.6, fz + rz_ * sd * C.P.W * 0.34); }
+    if (PL && G.mode === 'drive' && !HERO.on && !C.broken) { const hx = Math.sin(C.yaw), hz = Math.cos(C.yaw); lightPut(PL, C.x + hx * 7, C.y + 0.08, C.z + hz * 7, 4.6, [0.5, 0.47, 0.38]); lightPut(PL, C.x + hx * 12, C.y + 0.08, C.z + hz * 12, 3.4, [0.32, 0.3, 0.24]); }
     for (const v of TR.veh) { const dx = v.x - cam.x, dz = v.z - cam.z; if (dx * dx + dz * dz > 140 * 140) continue; const hx = Math.sin(v.yaw), hz = Math.cos(v.yaw); if (dx * hx + dz * hz > 0) continue; const rx_ = Math.cos(v.yaw), rz_ = -Math.sin(v.yaw), fx = v.x + hx * (v.L / 2 + 0.05), fz = v.z + hz * (v.L / 2 + 0.05), w = v.type === 'scooter' ? 0 : v.W * 0.32; if (w) { put('glow_head', fx + rx_ * w, v.y + 0.6, fz + rz_ * w); put('glow_head', fx - rx_ * w, v.y + 0.6, fz - rz_ * w); } else put('glow_head', fx, v.y + 0.6, fz); }
   }
   for (const v of TR.veh) {
@@ -469,6 +472,12 @@ function r3PeopleUpdate() {
     A.fade.array[k] = w.born == null ? 1 : Math.min(1, (G.t - w.born) / 0.8);
     k++;
   }
+  for (const w of FREEW) {
+    const name = w.knocked > 0 ? w.kind + 'd' : STYLE.toon ? w.kind + 'w' + (Math.floor(w.anim * 1.7) % 4) : (w.anim % 0.7 < 0.35 ? w.kind : w.kind + 'w'), K = PROPS.kinds[name]; if (!K) continue;
+    A.pos.array[k * 3] = w.x; A.pos.array[k * 3 + 1] = w.y - 0.05; A.pos.array[k * 3 + 2] = w.z; A.size.array[k * 2] = K.wM; A.size.array[k * 2 + 1] = K.hM; A.uv.array.set(K.uv, k * 4);
+    const rx_ = cam.z - w.z, rz_ = -(cam.x - w.x); A.flip.array[k] = (Math.sin(w.yaw) * rx_ + Math.cos(w.yaw) * rz_) > 0 ? 1 : 0; A.fade.array[k] = clamp(1 + w.run / 0.8, 0, 1);
+    k++;
+  }
   m.geometry.instanceCount = k; for (const a of Object.values(A)) a.needsUpdate = true;
 }
 // ---------- the traffic: every vehicle a billboard showing the frame nearest its angle to the camera ----------
@@ -481,9 +490,9 @@ function r3Traffic() {
   const tex = new THREE.CanvasTexture(atlas); tex.magFilter = STYLE.toon ? THREE.LinearFilter : THREE.NearestFilter; tex.minFilter = STYLE.toon ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter; tex.generateMipmaps = STYLE.toon; tex.colorSpace = THREE.SRGBColorSpace;
   const n = TR.max + 40, pos = new Float32Array(n * 3), size = new Float32Array(n * 2), uv = new Float32Array(n * 4), flip = new Float32Array(n);   // (room for the police on top of the traffic)
   const geo = new THREE.InstancedBufferGeometry().copy(new THREE.PlaneGeometry(1, 1)); geo.instanceCount = 0;
-  const A = { pos: new THREE.InstancedBufferAttribute(pos, 3), size: new THREE.InstancedBufferAttribute(size, 2), uv: new THREE.InstancedBufferAttribute(uv, 4), flip: new THREE.InstancedBufferAttribute(flip, 1), fade: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1) };
+  const A = { pos: new THREE.InstancedBufferAttribute(pos, 3), size: new THREE.InstancedBufferAttribute(size, 2), uv: new THREE.InstancedBufferAttribute(uv, 4), flip: new THREE.InstancedBufferAttribute(flip, 1), fade: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1), tone: new THREE.InstancedBufferAttribute(new Float32Array(n).fill(1), 1) };
   for (const a of Object.values(A)) a.setUsage(THREE.DynamicDrawUsage);
-  geo.setAttribute('iPos', A.pos); geo.setAttribute('iSize', A.size); geo.setAttribute('iUV', A.uv); geo.setAttribute('iFlip', A.flip); geo.setAttribute('iFade', A.fade);
+  geo.setAttribute('iPos', A.pos); geo.setAttribute('iSize', A.size); geo.setAttribute('iUV', A.uv); geo.setAttribute('iFlip', A.flip); geo.setAttribute('iFade', A.fade); geo.setAttribute('iTone', A.tone);
   const mat = new THREE.ShaderMaterial({ vertexShader: BILLBOARD_VS, fragmentShader: BILLBOARD_FS, uniforms: { map: { value: tex }, camPos: { value: new THREE.Vector3() }, tint: { value: new THREE.Vector3(1, 1, 1) }, fogColor: { value: new THREE.Color(R3.tod.fog) }, fogNear: { value: FOG_NEAR }, fogFar: { value: FOG_FAR }, propK: { value: 1 }, nearF: { value: new THREE.Vector2(0, 0.001) }, ...shadowUni() }, transparent: false });
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; scene3Add(m); R3.trafficMesh = m; R3.trafficA = A;
 }
@@ -494,39 +503,87 @@ function r3TrafficUpdate() {
     const look = Math.atan2(v.x - cam.x, v.z - cam.z), rel = angWrap(v.yaw - look);
     const i = Math.min(N - 1, Math.round(Math.abs(rel) / (Math.PI / (N - 1)))), f = v.K.frames[i], ppm = v.K.type === 'bus' || v.kind === 'gravel' ? TRF.ppmLong : TRF.ppm;
     A.pos.array[k * 3] = v.x; A.pos.array[k * 3 + 1] = v.y - 3 / ppm; A.pos.array[k * 3 + 2] = v.z;
-    A.size.array[k * 2] = f.wM; A.size.array[k * 2 + 1] = f.hM; A.uv.array.set(f.uv, k * 4); A.flip.array[k] = rel > 0 ? 1 : 0; A.fade.array[k] = v.born == null ? 1 : Math.min(1, (G.t - v.born) / 0.8);
+    A.size.array[k * 2] = f.wM; A.size.array[k * 2 + 1] = f.hM; A.uv.array.set(f.uv, k * 4); A.flip.array[k] = rel > 0 ? 1 : 0; A.fade.array[k] = v.born == null ? 1 : Math.min(1, (G.t - v.born) / 0.8); A.tone.array[k] = v.broken ? 0.55 : v.hp != null && v.hp < 0.5 ? 0.8 : 1;
     k++;
   }
   m.geometry.instanceCount = k; for (const a of Object.values(A)) a.needsUpdate = true;
   m.material.uniforms.camPos.value.copy(cam);
   // how near the camera a sprite starts to thin out: well clear of the shoulder in the chase view, only at the glass in the cockpit
-  const nf = G.mode !== 'drive' ? [0, 0.001] : CAMV.fp ? [0.35, 0.8] : [1.8, 4.2];
+  const nf = G.mode !== 'drive' ? [0, 0.001] : CAMV.fp ? [0.35, 0.8] : HERO.on ? [1.2, 2.6] : [2.2, 4.4];
   for (const mm of [m, R3.propMesh]) if (mm) mm.material.uniforms.nearF.value.set(nf[0], nf[1]);
 }
 // a prop's picture swapped for another of the same atlas (the signal lamps)
 function propSetKind(p, name) { if (!p || p.k === name) return; const K = PROPS.kinds[name]; if (!K || !R3.propUV) return; p.k = name; R3.propUV.array.set(K.uv, p.i * 4); R3.propUV.needsUpdate = true; }
-// ---------- the car ----------
-function r3CarSet(spec) {
-  const frames = carTurn(spec), N = TURN_N, cols = 8, rows = Math.ceil(N / cols), fw = frames[0].width, fh = frames[0].height;
+// ---------- the vehicles the player has had: each a turntable of pictures on a quad that faces the camera ----------
+// frames: canvases of one size, one per step of the turn (or fewer, with a map from step to [frame, mirrored]);
+// ppm: their pixels to the metre; gyPx: the row of the ground line
+function r3CarSlot(frames, ppm, gyPx, map) {
+  const N = frames.length, cols = Math.min(8, N), rows = Math.ceil(N / cols), fw = frames[0].width, fh = frames[0].height;
   const at = canvas(cols * fw, rows * fh), g = at.getContext('2d');
   frames.forEach((f, i) => g.drawImage(f, (i % cols) * fw, Math.floor(i / cols) * fh));
-  if (R3.car) { R3.scene.remove(R3.car); R3.carTex.dispose(); }
   const tex = new THREE.CanvasTexture(at); tex.magFilter = STYLE.toon ? THREE.LinearFilter : THREE.NearestFilter; tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false; tex.colorSpace = THREE.SRGBColorSpace;
-  R3.carTex = tex; R3.carFrames = { cols, rows, fw, fh, N };
-  const sk = frames[0].__s || 1, ppm = TURN_OPT.ppm * sk, wM = fw / ppm, hM = fh / ppm, gy = TURN_OPT.gy * sk / ppm;
-  const geo = new THREE.PlaneGeometry(wM, hM); geo.translate(0, gy - hM / 2 + 0.02, 0);   // the frame's ground line (gy from its top) sits at y = 0
+  const wM = fw / ppm, hM = fh / ppm, gy = gyPx / ppm;
+  const geo = new THREE.PlaneGeometry(wM, hM); geo.translate(0, gy - hM / 2 + 0.02, 0);   // the frame's ground line sits at y = 0
   const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.5, depthWrite: true, fog: false, side: THREE.DoubleSide });
-  const m = new THREE.Mesh(geo, mat); scene3Add(m); R3.car = m;
-  r3CarFrame(0);
+  const mesh = new THREE.Mesh(geo, mat); scene3Add(mesh);
+  const S = { mesh, tex, F: { cols, rows, fw, fh, N: map ? map.length : N }, map: map || null, shadow: r3Blob(Math.min(12, wM * 0.9), Math.min(3.2, hM * 1.3)) };
+  r3SlotFrame(S, 0); return S;
 }
-function r3CarFrame(i) {
-  const F = R3.carFrames, tex = R3.carTex; i = ((i % F.N) + F.N) % F.N;
-  tex.repeat.set(1 / F.cols, 1 / F.rows); tex.offset.set((i % F.cols) / F.cols, 1 - (Math.floor(i / F.cols) + 1) / F.rows);
+function r3SlotFree(S) { if (!S) return; R3.scene.remove(S.mesh); R3.scene.remove(S.shadow); S.mesh.geometry.dispose(); S.mesh.material.dispose(); S.tex.dispose(); }
+function r3SlotFrame(S, i) {
+  const F = S.F; i = ((i % F.N) + F.N) % F.N; let fi = i, flip = false; if (S.map) { fi = S.map[i][0]; flip = S.map[i][1]; }
+  S.tex.repeat.set((flip ? -1 : 1) / F.cols, 1 / F.rows); S.tex.offset.set(((fi % F.cols) + (flip ? 1 : 0)) / F.cols, 1 - (Math.floor(fi / F.cols) + 1) / F.rows);
 }
-function r3Shadow() {
-  const c = canvas(64, 32), g = c.getContext('2d'), gr = g.createRadialGradient(32, 16, 2, 32, 16, 30); gr.addColorStop(0, 'rgba(0,0,0,0.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 32);
-  const tex = new THREE.CanvasTexture(c), m = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 2.6), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })); m.rotation.x = -Math.PI / 2;
-  const grp = new THREE.Group(); grp.add(m); scene3Add(grp); R3.shadow = grp;
+// a soft dark blob laid on the ground under a vehicle or the hero
+function r3Blob(L, W) {
+  if (!R3.blobTex) { const c = canvas(64, 32), g = c.getContext('2d'), gr = g.createRadialGradient(32, 16, 2, 32, 16, 30); gr.addColorStop(0, 'rgba(0,0,0,0.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 32); R3.blobTex = new THREE.CanvasTexture(c); }
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(L, W), new THREE.MeshBasicMaterial({ map: R3.blobTex, transparent: true, depthWrite: false })); m.rotation.x = -Math.PI / 2;
+  const grp = new THREE.Group(); grp.add(m); scene3Add(grp); return grp;
+}
+// the car picked in the showroom (everything left about from the last drive goes)
+function r3CarSet(spec) {
+  if (CAR.slot) r3SlotFree(CAR.slot);
+  const frames = carTurn(spec), sk = frames[0].__s || 1;
+  CAR.slot = r3CarSlot(frames, TURN_OPT.ppm * sk, TURN_OPT.gy * sk); r3CarCurrent();
+}
+// a vehicle of the street, as the player's: its thirteen pictures (behind round to head-on), mirrored for the other side
+function r3KindSlot(kind) {
+  const K = TRF.kinds[kind], fr = K.frames, cw = Math.max(...fr.map((f) => f.px.cw || f.px.w)), ch = fr[0].px.ch || fr[0].px.h, sc = fr[0].px.s || 1;
+  const cvs = fr.map((f) => { const c = canvas(cw, ch); c.getContext('2d').drawImage(f.px.toCanvas(), Math.round((cw - (f.px.cw || f.px.w)) / 2), 0); return c; });
+  const map = []; for (let i = 0; i < TURN_N; i++) { const rel = angWrap(-i * TAU / TURN_N), j = Math.min(TRF.N - 1, Math.round(Math.abs(rel) / (Math.PI / (TRF.N - 1)))); map.push([j, rel > 0]); }
+  const long = K.type === 'bus' || kind === 'gravel', ppm = (long ? TRF.ppmLong : TRF.ppm) * sc;
+  return r3CarSlot(cvs, ppm, fr[0].gy * ppm, map);
+}
+// the player's present vehicle: a new one off the street (by its kind), or the slot it came with
+function r3CarCurrent(kind) { if (kind) CAR.slot = r3KindSlot(kind); if (CAR.slot) { R3.car = CAR.slot.mesh; R3.shadow = CAR.slot.shadow; } }
+function r3Shadow() { /* the blobs come with the vehicles now */ }
+// ---------- the hero: one quad, its picture picked by the side he shows the camera and what he is doing ----------
+// (the eighty-nine pictures take a while to paint, so they are painted a few at a time after the city is up, and all at
+// once only if the hero is wanted before they are done)
+function r3Hero() {
+  const s = STYLE.toon ? 3.6 : 2.2, cols = HERO_POSES.length, n = HERO_DIRS * cols + 1, fw = Math.ceil(HERO_W * s), fh = Math.ceil(HERO_H * s), rows = Math.ceil(n / cols);
+  const AW = Math.max(cols * fw, Math.ceil(HERO_H * s)), AH = rows * fh, at = canvas(AW, AH), g = at.getContext('2d'), cells = [];
+  for (let i = 0; i < n; i++) { const down = i === n - 1, x = (i % cols) * fw, y = Math.floor(i / cols) * fh, w = down ? Math.ceil(HERO_H * s) : fw, h = down ? Math.ceil(HERO_W * s) : fh; cells.push([x / AW, 1 - (y + h) / AH, (x + w) / AW, 1 - y / AH, w / s / HERO_UPM, h / s / HERO_UPM, x, y]); }
+  const tex = new THREE.CanvasTexture(at); tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.generateMipmaps = true; tex.colorSpace = THREE.SRGBColorSpace;
+  const geo = new THREE.PlaneGeometry(1, 1); geo.translate(0, 0.5, 0);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, alphaTest: 0.5, fog: false, side: THREE.DoubleSide })); mesh.visible = false; scene3Add(mesh);
+  R3.hero = { mesh, cells, shadow: r3Blob(0.95, 0.6), fi: -1, g, tex, s, next: 0, n };
+}
+function heroPaintStep(ms) {
+  const R = R3.hero; if (!R || R.next >= R.n) return true; const t0 = performance.now(), cols = HERO_POSES.length;
+  while (R.next < R.n && performance.now() - t0 < ms) { const i = R.next++, c = R.cells[i], px = i === R.n - 1 ? heroDown(R.s) : heroFrame((Math.floor(i / cols) / HERO_DIRS) * TAU, HERO_POSES[i % cols], R.s); R.g.drawImage(px.toCanvas(), c[6], c[7]); }
+  if (R.next >= R.n) { R.tex.needsUpdate = true; return true; } return false;
+}
+function r3HeroUpdate() {
+  const R = R3.hero; if (!R) return; const H = HERO, on = H.on && G.mode === 'drive'; R.mesh.visible = on; R.shadow.visible = on; if (!on) return;
+  if (R.next < R.n) heroPaintStep(1e9);
+  const cam = R3.cam.position, look = Math.atan2(H.x - cam.x, H.z - cam.z), phi = -angWrap(H.yaw - look), d = ((Math.round(phi / (TAU / HERO_DIRS)) % HERO_DIRS) + HERO_DIRS) % HERO_DIRS;
+  const pose = H.punchT > 0 ? (H.punchT > 0.24 ? 'p0' : 'p1') : H.spd > 3.2 ? 'r' + (Math.floor(H.anim * 2) % 4) : H.spd > 0.35 ? 'w' + (Math.floor(H.anim * 2) % 4) : 'idle';
+  const fi = H.down > 0 ? R.cells.length - 1 : d * HERO_POSES.length + HERO_POSES.indexOf(pose), c = R.cells[fi];
+  if (fi !== R.fi) { R.fi = fi; const uv = R.mesh.geometry.attributes.uv; uv.setXY(0, c[0], c[3]); uv.setXY(1, c[2], c[3]); uv.setXY(2, c[0], c[1]); uv.setXY(3, c[2], c[1]); uv.needsUpdate = true; }
+  R.mesh.scale.set(c[4], c[5], 1); R.mesh.position.set(H.x, H.y - 2 / HERO_UPM, H.z); R.mesh.rotation.y = look;
+  R.mesh.material.color.setScalar(R3.todKind === 'night' ? 0.8 : R3.todKind === 'dusk' ? 0.92 : 1);
+  R.shadow.position.set(H.x, H.y + 0.03, H.z); R.shadow.rotation.y = H.yaw;
 }
 // tyre marks: short dark quads laid where the tyres slid
 function r3Marks() { const geo = new THREE.PlaneGeometry(0.3, 1.2); geo.rotateX(-Math.PI / 2); const m = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: 0x1a1a1e, transparent: true, opacity: 0.55, depthWrite: false }), 800); m.count = 0; m.frustumCulled = false; scene3Add(m); R3.marks = m; R3.markN = 0; }
@@ -594,15 +651,19 @@ function r3FrameFX(focusDist) {
 }
 // ---------- per frame: the car's picture, the shadow, the camera ----------
 function r3Update(camYaw) {
-  const C = CAR;
-  if (R3.car) {
-    R3.car.visible = !CAMV.fp;
-    // the turntable's frame i shows the car turned i/N of a turn to the right of head-on from behind
-    const rel = angWrap(C.yaw - camYaw), i = Math.round((-rel / TAU) * TURN_N);
-    r3CarFrame(i);
-    R3.car.position.set(C.x, C.y, C.z); R3.car.rotation.y = camYaw;   // the quad faces the camera
-    R3.shadow.position.set(C.x, C.y + 0.02, C.z); R3.shadow.rotation.y = C.yaw - Math.PI / 2;
-  }
+  const C = CAR, cam = R3.cam.position;
+  // the turntable's frame i shows the vehicle turned i/N of a turn to the right of head-on from behind; the quad faces the camera
+  const pose = (S, x, y, z, yaw, dmg, vis, face) => {
+    if (!S) return; S.mesh.visible = vis; S.shadow.visible = vis; if (!vis) return;
+    const look = face == null ? Math.atan2(x - cam.x, z - cam.z) : face, rel = angWrap(yaw - look);
+    r3SlotFrame(S, Math.round((-rel / TAU) * TURN_N));
+    S.mesh.position.set(x, y, z); S.mesh.rotation.y = look; S.shadow.position.set(x, y + 0.02, z); S.shadow.rotation.y = yaw - Math.PI / 2;
+    S.mesh.material.color.setScalar(1 - 0.4 * Math.pow(clamp(dmg, 0, 1), 1.5));
+  };
+  const drive = G.mode === 'drive';
+  const cs = HERO.on && C.slotP; pose(C.slot, C.x, C.y, C.z, C.yaw, C.damage, drive && !cs && !(CAMV.fp && !HERO.on), HERO.on ? null : camYaw); pose(C.slotP, C.x, C.y, C.z, C.yaw, C.damage, drive && !!cs);
+  for (const p of PARK) { pose(p.slot, p.x, p.y, p.z, p.yaw, p.damage, drive && !p.slotP); pose(p.slotP, p.x, p.y, p.z, p.yaw, p.damage, drive); }
+  r3HeroUpdate();
   R3.propMesh.material.uniforms.camPos.value.copy(R3.cam.position);
   if (R3.waterMat) { R3.waterMat.uniforms.camPos.value.copy(R3.cam.position); R3.waterMat.uniforms.t.value = G.t; }
   if (R3.sky) R3.sky.position.copy(R3.cam.position);

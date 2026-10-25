@@ -261,6 +261,7 @@ function paintProps() {
   propKind('lamp_off', paintLamp(0x303034), 0.34); propKind('lamp_red', paintLamp(0xff3030), 0.34); propKind('lamp_yellow', paintLamp(0xffc020), 0.34); propKind('lamp_green', paintLamp(0x30e060), 0.34);
   for (let i = 0; i < 3; i++) propKind('boat' + i, paintBoat(1 + i), 5); if (STYLE.toon) TPEOPLE.forEach((sp, i) => { const h = sp.kid ? 1.7 : 1.7; propKind('person' + i, tPerson(sp, null), h); for (let f = 0; f < 4; f++) propKind('person' + i + 'w' + f, tPerson(sp, 0.25 + f * 0.25), h); propKind('person' + i + 'w', tPerson(sp, 0.25), h); propKind('person' + i + 'd', tPersonDown(sp), 1.17); });
   else for (let i = 0; i < 8; i++) { propKind('person' + i, paintPerson(600 + i * 5, false), 1.7); propKind('person' + i + 'w', paintPerson(600 + i * 5, true), 1.7); propKind('person' + i + 'd', paintPerson(600 + i * 5, false, true), 0.95); }
+  paintFxSprites();
 }
 // ---------- placing ----------
 function addProp(name, x, z, o) {

@@ -95,7 +95,7 @@ function vehPose(v) {
 }
 function chooseNext(v, r) {
   const opts = v.lane.next; if (!opts.length) return null;
-  if (v.cop) { let best = null, bd = 1e9; for (const c of opts) { const q = polyAt(c.to.pts, Math.min(40, c.to.len - 1)), d = Math.hypot(q.x - CAR.x, q.z - CAR.z) + (c.turn === 'straight' ? 0 : 10); if (d < bd) { bd = d; best = c; } } return best; }
+  if (v.cop) { const P = plr(); let best = null, bd = 1e9; for (const c of opts) { const q = polyAt(c.to.pts, Math.min(40, c.to.len - 1)), d = Math.hypot(q.x - P.x, q.z - P.z) + (c.turn === 'straight' ? 0 : 10); if (d < bd) { bd = d; best = c; } } return best; }
   const w = opts.map((c) => (c.turn === 'straight' ? 0.62 : c.turn === 'right' ? 0.23 : 0.15) * (c.to.e.K.cls >= 1 ? 1 : 0.5));
   let t = r() * w.reduce((a, b) => a + b, 0); for (let i = 0; i < opts.length; i++) { t -= w[i]; if (t <= 0) return opts[i]; } return opts[opts.length - 1];
 }
@@ -108,28 +108,40 @@ function idm(v, gap, dv) {
 }
 const _trr = mulberry(4242);
 function trafficTick(dt) {
-  const C = CAR, r = _trr;
+  const C = CAR, P = plr(), r = _trr;
   // spawn around the player, retire what is far away
   TR.spawnT -= dt;
   if (TR.veh.length < TR.max && TR.spawnT <= 0) { TR.spawnT = 0.03; trafficSpawn(r); }
   const far2 = TR.far * TR.far, DBG = window.__dbgTr, cam = R3.cam ? R3.cam.position : C, cfx = Math.sin(CAMV.az), cfz = Math.cos(CAMV.az);
   let n150 = 0, thin = null;
   for (let i = TR.veh.length - 1; i >= 0; i--) {
-    const v = TR.veh[i], dx = v.x - C.x, dz = v.z - C.z, d2 = dx * dx + dz * dz; if (v.cop) continue;
+    const v = TR.veh[i], dx = v.x - P.x, dz = v.z - P.z, d2 = dx * dx + dz * dz; if (v.cop) continue;
     if (d2 > far2) { retire(v, i); continue; }
+    // a wreck stays a while, then is towed (out of sight)
+    if (v.broken && (d2 > 260 * 260 || (G.t - v.brokeT > 90 && (v.x - cam.x) * cfx + (v.z - cam.z) * cfz < 0))) { retire(v, i); continue; }
     if (d2 < 150 * 150) { n150++; if (!thin && d2 > 40 * 40 && (v.x - cam.x) * cfx + (v.z - cam.z) * cfz < 0) thin = v; }
   }
   if (n150 > TR.dense && thin) retire(thin, TR.veh.indexOf(thin));
   // sort each occupied lane by distance so every vehicle knows its leader (only the paths someone is on: there are thousands)
   const stamp = (TR.stamp = (TR.stamp || 0) + 1);
   for (const v of TR.veh) { const pth = v.conn || v.lane; if (pth.st !== stamp) { pth.st = stamp; if (pth.veh.length > 1) pth.veh.sort(byS); } }
-  const pv = Math.hypot(C.vx, C.vy), phx = Math.sin(C.yaw) * C.vx + Math.cos(C.yaw) * C.vy, phz = Math.cos(C.yaw) * C.vx - Math.sin(C.yaw) * C.vy;
+  const pv = HERO.on ? HERO.spd : Math.hypot(C.vx, C.vy), phx = HERO.on ? HERO.vx : Math.sin(C.yaw) * C.vx + Math.cos(C.yaw) * C.vy, phz = HERO.on ? HERO.vz : Math.cos(C.yaw) * C.vx - Math.sin(C.yaw) * C.vy;
+  // what the traffic must not drive into: the player (in a car or on foot), and the vehicles the player has left standing
+  const OBS = [];
+  if (!C.ghost && C.P) {
+    if (HERO.on) { OBS.push({ x: HERO.x, z: HERO.z, y: HERO.y, W: 0.8, L: 0.8, pl: true, foot: true, vx: HERO.vx, vz: HERO.vz }); OBS.push({ x: C.x, z: C.z, y: C.y, W: C.spec.W * 0.92, L: C.spec.L * 0.9, pl: false, vx: 0, vz: 0 }); }
+    else OBS.push({ x: C.x, z: C.z, y: C.y, W: C.P.W, L: C.P.L, pl: true, vx: phx, vz: phz });
+    for (const p of PARK) OBS.push({ x: p.x, z: p.z, y: p.y, W: p.spec.W * 0.92, L: p.spec.L * 0.9, pl: false, vx: 0, vz: 0 });
+  }
   for (let i = 0; i < TR.veh.length; i++) {
     const v = TR.veh[i], path = v.conn || v.lane, list = path.veh, idx = list.indexOf(v);
+    if (v.broken) { v.v = 0; v.brake = 0; continue; }   // a wreck: going nowhere
     let gap = null, dv = 0;
     // the one ahead on this path
     if (idx >= 0 && idx + 1 < list.length) { const w = list[idx + 1]; gap = w.s - v.s - (w.L + v.L) / 2; dv = v.v - w.v;
-      if (v.cop && !v.conn && w.v < 4 && gap < 14) { if (copSwitchLane(v)) { gap = null; dv = 0; } else { v.pushT = (v.pushT || 0) + dt; if (v.pushT > 2) { gap = null; dv = 0; } } } else v.pushT = 0; }
+      if (v.cop && !v.conn && w.v < 4 && gap < 14) { if (copSwitchLane(v)) { gap = null; dv = 0; } else { v.pushT = (v.pushT || 0) + dt; if (v.pushT > 2) { gap = null; dv = 0; } } } else v.pushT = 0;
+      // a wreck ahead: over to the next lane if there is one; after a long wait, past it as best it can
+      if (w.broken && !v.cop && gap < 16) { v.bkT = (v.bkT || 0) + dt; if (v.bkT > 1.2 && !v.conn && copSwitchLane(v)) { gap = null; dv = 0; v.bkT = 0; } else if (v.bkT > 5) { gap = null; dv = 0; } } else if (!w.broken) v.bkT = 0; }
     else {
       // or the first one on what comes next
       const nxt = v.conn ? v.conn.to : (v.nextC || (v.nextC = chooseNext(v, r)));
@@ -142,32 +154,46 @@ function trafficTick(dt) {
       else for (const ss of v.lane.stops) { const g = ss - v.s - v.L / 2; if (g > -1 && g < 40 && v.lastStop !== ss) { if (g < 0.6) { v.dwell = 5 + r() * 4; v.lastStop = ss; } else if (gap == null || g < gap) { gap = Math.max(0.05, g); dv = v.v; } break; } }
     }
     // the lights, and giving way, at the end of the lane
+    v.atRed = false;
     if (!v.conn) {
       const n = v.lane.to, rem = v.lane.len - v.s - v.L / 2, stopGap = rem - 1.0;
       if (n.lit && !v.cop) {
         const st = signalState(n, v.lane.phase);
         const must = st === 'red' || (st === 'yellow' && stopGap > v.v * v.v / (2 * 3.5) + 2);
-        if (must && stopGap < 60 && (gap == null || stopGap < gap)) { gap = Math.max(0.05, stopGap); dv = v.v; }
+        if (must && stopGap < 60 && (gap == null || stopGap < gap)) { gap = Math.max(0.05, stopGap); dv = v.v; v.atRed = true; }
         // turning left across the oncoming traffic
         if (!must && v.nextC && v.nextC.turn === 'left' && rem < 12 && oncoming(v, n)) { if (gap == null || stopGap < gap) { gap = Math.max(0.05, stopGap); dv = v.v; } }
       } else if (rem < 10 && n.edges.length >= 3 && !v.cop) {
         // an unlit junction: wait for whoever is already in it, or coming down a bigger road; never for ever
         if (junctionBusy(v, n) && v.wait < 3) { if (gap == null || stopGap < gap) { gap = Math.max(0.05, stopGap); dv = v.v; } v.wait += dt; } else v.wait = Math.max(0, v.wait - dt * 0.5);
       }
+      // don't block the box: no going into a junction whose way out is full (it would sit there in everyone's way)
+      const nc = v.nextC; if (nc && !v.cop && rem < 14 && n.edges.length >= 3) {
+        const out = nc.to.veh, last = out.length ? out.reduce((a, b) => (b.s < a.s ? b : a)) : null, inC = nc.veh.length ? nc.veh.reduce((a, b) => (b.s < a.s ? b : a)) : null;
+        const full = (last && last.s < last.L / 2 + v.L + 2 && last.v < 2) || (inC && inC.v < 1 && inC.s < nc.len - inC.L / 2);
+        v.boxT = full ? (v.boxT || 0) + dt : 0;
+        if (full && v.boxT < 8 && (gap == null || stopGap < gap)) { gap = Math.max(0.05, stopGap); dv = v.v; }
+      }
     }
-    // the player, when on this vehicle's path ahead
-    const dpx = C.x - v.x, dpz = C.z - v.z;
-    if (!v.cop && !C.ghost && dpx * dpx + dpz * dpz < 70 * 70 && Math.abs(v.y - C.y) < 3) {   // (not when one of us is up on a flyover above the other)
-      const n = nearestOnPts(path.pts, C.x, C.z);
-      // only a player actually in front of it counts: one beside or behind (merging onto its lane, say) whose spot merely
-      // lies further along the path would hold it there while it blocks that player, and neither would ever go
-      const inFront = dpx * Math.sin(v.yaw) + dpz * Math.cos(v.yaw) > 0;
-      // a player who just sits there is, after a while, nudged past rather than waited on for ever
-      const blocked = inFront && n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && n.s - v.s < 8 && v.v < 0.3 && pv < 1;
-      v.blockT = blocked ? (v.blockT || 0) + dt : 0;
-      if (inFront && n.d < v.W / 2 + C.P.W / 2 + 0.5 && n.s > v.s && v.blockT < 2) { const g = n.s - v.s - (v.L + C.P.L) / 2; if (gap == null || g < gap) { gap = Math.max(0.05, g); const hx = Math.sin(n.yaw), hz = Math.cos(n.yaw); dv = v.v - (phx * hx + phz * hz); } }
-      // a stopped or sideways player right in front: stop and lean on the horn
-      if (gap != null && gap < 3 && v.v < 1 && pv < 1) { if (v.horn <= 0 && r() < dt * 0.3) { v.horn = 1.5; sfxHornFar(Math.hypot(dpx, dpz)); } }
+    // the player (and whatever the player left standing), when on this vehicle's path ahead
+    const dpx = P.x - v.x, dpz = P.z - v.z;
+    if (v.v > 3) v.pkT = 0;
+    if (!v.cop) for (const o of OBS) {
+      const ox = o.x - v.x, oz = o.z - v.z; if (ox * ox + oz * oz > 70 * 70 || Math.abs(v.y - o.y) > 3) continue;   // (not when one of us is up on a flyover above the other)
+      // only something actually in front of it counts: one beside or behind (merging onto its lane, say) whose spot merely
+      // lies further along the path would hold it there while it blocks that one, and neither would ever go
+      if (ox * Math.sin(v.yaw) + oz * Math.cos(v.yaw) <= 0) continue;
+      const n = nearestOnPts(path.pts, o.x, o.z); if (!(n.d < v.W / 2 + o.W / 2 + 0.5 && n.s > v.s)) continue;
+      if (o.pl && !o.foot) {
+        // a player who just sits there in a car is, after a while, nudged past rather than waited on for ever
+        const blocked = n.s - v.s < 8 && v.v < 0.3 && pv < 1; v.blockT = blocked ? (v.blockT || 0) + dt : 0; if (v.blockT >= 2) continue;
+      } else if (!o.pl) {
+        // a car left at the kerb: round it by the next lane, or after a long wait past it
+        if (n.s - v.s < 14 && v.v < 0.5) { v.pkT = (v.pkT || 0) + dt; if (v.pkT > 1.5 && !v.conn && copSwitchLane(v)) { v.pkT = 0; continue; } if (v.pkT > 10) continue; }
+      }
+      const g = n.s - v.s - (v.L + o.L) / 2; if (gap == null || g < gap) { gap = Math.max(0.05, g); const hx = Math.sin(n.yaw), hz = Math.cos(n.yaw); dv = v.v - (o.vx * hx + o.vz * hz); }
+      // the player standing (or stopped) right in front: stop and lean on the horn
+      if (o.pl && gap < 3 && v.v < 1 && pv < 1) { if (v.horn <= 0 && r() < dt * 0.3) { v.horn = 1.5; sfxHornFar(Math.hypot(dpx, dpz)); } }
     }
     if (v.horn > 0) v.horn -= dt;
     // the whoosh of something passing close by at speed
@@ -176,7 +202,8 @@ function trafficTick(dt) {
     if (v.shoved > 0) { v.shoved -= dt; if (gap != null && gap < 5) { gap = 5; dv = 0; } }   // just shoved by the player: keep rolling a moment
     // gridlock breaker: a vehicle stuck behind something that is itself not moving gives up waiting after a while
     v.stillT = v.v < 0.2 && !(v.dwell > 0) ? (v.stillT || 0) + dt : 0;
-    if (v.stillT > 12 && gap != null && Math.abs(dv) < 0.5 && !(v.blockT >= 2)) {
+    // (not one waiting at a red light: that wait ends by itself, and creeping on would put it in the junction)
+    if (v.stillT > 12 && gap != null && Math.abs(dv) < 0.5 && !(v.blockT >= 2) && !v.atRed) {
       if (dpx * dpx + dpz * dpz > 220 * 220) { retire(v, i); i--; continue; }
       gap = Math.max(gap, 7); dv = 0;
     }
@@ -223,7 +250,7 @@ function junctionBusy(v, n) {
 // within reach, kept in a list refreshed as the car moves on (weighted by length, so a long road gets its share)
 function ptsBB(pts) { let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const p of pts) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < z0) z0 = p[1]; if (p[1] > z1) z1 = p[1]; } return [x0, z0, x1, z1]; }
 function nearCands(all, R, old, minLen, wf) {
-  const C = CAR; if (old && (C.x - old.x) * (C.x - old.x) + (C.z - old.z) * (C.z - old.z) < 50 * 50) return old;
+  const C = plr(); if (old && (C.x - old.x) * (C.x - old.x) + (C.z - old.z) * (C.z - old.z) < 50 * 50) return old;
   const list = [], cum = []; let tot = 0;
   for (const l of all) {
     if (l.len < minLen) continue; const b = l.bb || (l.bb = ptsBB(l.pts));
@@ -235,7 +262,7 @@ function nearCands(all, R, old, minLen, wf) {
 const laneW8 = (l) => TR.cw[Math.min(3, l.e.K.cls)];
 function candPick(K, r) { const u = r() * K.tot; let lo = 0, hi = K.cum.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (K.cum[m] < u) lo = m + 1; else hi = m; } return K.list[lo]; }
 function trafficSpawn(r, minD) {
-  const C = CAR, K = (TR.cand = nearCands(TR.lanes, TR.near + 60, TR.cand, 30, laneW8)); if (!K.list.length) return; let tries = 0;
+  const C = plr(), K = (TR.cand = nearCands(TR.lanes, TR.near + 60, TR.cand, 30, laneW8)); if (!K.list.length) return; let tries = 0;
   while (tries++ < 12) {
     const l = candPick(K, r);
     const s = 8 + r() * (l.len - 16), p = polyAt(l.pts, s), d = Math.hypot(p.x - C.x, p.z - C.z);
@@ -251,7 +278,7 @@ function trafficSpawn(r, minD) {
 }
 // the player against the traffic: two discs under the car against each vehicle's box; both feel it
 function trafficCollide(dt) {
-  const C = CAR; if (C.ghost || !C.P) return; const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), rc = C.P.W * 0.5 * 0.9;
+  const C = CAR; if (C.ghost || !C.P || HERO.on) return; const sy = Math.sin(C.yaw), cy = Math.cos(C.yaw), rc = C.P.W * 0.5 * 0.9;
   for (const v of TR.veh) {
     const dx = v.x - C.x, dz = v.z - C.z; if (dx * dx + dz * dz > 100 || Math.abs(v.y - C.y) > 3) continue;
     const c = Math.cos(v.yaw), sn = Math.sin(v.yaw), hx = v.W / 2, hz = v.L / 2, cx = v.x - sn * 0, cz = v.z - c * 0;
@@ -262,6 +289,16 @@ function trafficCollide(dt) {
       const cu = clamp(lu, -hx, hx), cv = clamp(lv, -hz, hz), du = lu - cu, dv = lv - cv, d = Math.hypot(du, dv); if (d >= rc) continue;
       let lnx, lnz, pen; if (d > 1e-3) { lnx = du / d; lnz = dv / d; pen = rc - d; } else { const toL = lu + hx, toR = hx - lu, toT = lv + hz, toB = hz - lv, m = Math.min(toL, toR, toT, toB); lnx = m === toL ? -1 : m === toR ? 1 : 0; lnz = m === toT ? -1 : m === toB ? 1 : 0; pen = m + rc; }
       const nx = lnx * c + lnz * sn, nz = -lnx * sn + lnz * c;
+      // how hard it was hit: the closing speed along the push (a vehicle only takes one knock in a moment)
+      { const wx = C.vx * sy + C.vy * cy, wz = C.vx * cy - C.vy * sy, close = -((wx - v.v * sn) * nx + (wz - v.v * c) * nz); if (close > 2.4 && !(v.hitT > G.t)) { v.hitT = G.t + 0.45; vehHurt(v, close); } }
+      // a wreck is shoved along its lane by a car leaning on it (out of the way, the way GTA lets you), and costs some speed
+      if (v.broken) {
+        // the overlap goes mostly into the wreck, slid along its lane (it cannot go sideways); the car keeps the rest
+        const along = -(nx * sn + nz * c), P = v.conn || v.lane, ds = pen * along * 0.85, s1 = clamp(v.s + ds, 0.5, P.len - 0.5), moved = Math.abs(s1 - v.s);
+        v.s = s1; vehPose(v); const rest = Math.max(0, pen - moved * Math.abs(along));
+        C.x += nx * rest; C.z += nz * rest; if (rest > 0.02) carBounce(nx, nz); else { C.vx *= 0.985; }
+        continue;
+      }
       // pushed from behind, the vehicle rolls on rather than sitting there (the way a jam gives way in an arcade city)
       const fwd = (C.vx * sy) * Math.sin(v.yaw) + (C.vx * cy) * Math.cos(v.yaw), leaning = C.throttle > 0.3 && !C.rev && Math.abs(fwd) < 0.5, pushing = lv < 0 && !v.cop && (fwd > 0.3 || leaning);
       const yielding = !pushing && lv > 0 && !v.cop && v.v < 0.6 && leaning;
@@ -289,9 +326,9 @@ function trafficReset() {
 
 // a police car set loose on a lane some way off, already moving, hunting the player
 function spawnCop(r) {
-  const C = CAR, K = (TR.cand = nearCands(TR.lanes, TR.near + 60, TR.cand, 30, laneW8)); if (!K.list.length) return null;
+  const C = plr(), KC = (TR.cand = nearCands(TR.lanes, TR.near + 60, TR.cand, 30, laneW8)); if (!KC.list.length) return null;
   for (let t = 0; t < 40; t++) {
-    const l = candPick(K, r); if (l.e.K.cls < 1 || l.len < 30 || l.e.lvl) continue;
+    const l = candPick(KC, r); if (l.e.K.cls < 1 || l.len < 30 || l.e.lvl) continue;
     const s = 5 + r() * (l.len - 10), p = polyAt(l.pts, s), d = Math.hypot(p.x - C.x, p.z - C.z); if (d < 120 || d > 320) continue;
     if (Math.sin(p.yaw) * (C.x - p.x) + Math.cos(p.yaw) * (C.z - p.z) < 0.3 * d) continue;   // heading our way
     const K = TRF.kinds.police, v = { kind: 'police', K, type: 'car', L: K.L, W: 1.8, lane: l, conn: null, s, v: 12, x: 0, z: 0, y: 0, yaw: 0, wait: 0, nextC: null, side: 0, brake: 0, horn: 0, id: Math.random(), cop: true, v0: 23, a: 3.8, b: 3, T: 0.6, s0: 1.5 };

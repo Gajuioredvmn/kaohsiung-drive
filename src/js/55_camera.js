@@ -2,7 +2,26 @@
 // view: 'chase' over the shoulder, 'cockpit' from the seat, 'high' the HD-2D bird's angle
 const CAMV = { az: 0, off: 0, offV: 0, el: 26 * D2R, dist: 8.5, fp: false, view: 'chase', dragging: false, lookX: 0, lookZ: 0, yawS: 0, shake: 0 };
 function camReset() { CAMV.az = CAR.yaw; CAMV.off = 0; CAMV.yawS = CAR.yaw; CAMV.lookX = CAR.x; CAMV.lookZ = CAR.z; }
+// on foot: behind the hero, swinging round behind him as he goes forward (a sideways push leaves the view be), drag to look about
+function camFoot(dt) {
+  const H = HERO, cam = R3.cam, fwd = Math.max(0, CTL.move.y) + (H.go ? 1 : 0);
+  if (H.spd > 0.6 && fwd > 0.2) CAMV.yawS += angWrap(H.yaw - CAMV.yawS) * clamp(dt * 2.4 * Math.min(1, fwd), 0, 1);
+  if (!CAMV.dragging) CAMV.off += (0 - CAMV.off) * clamp(dt * 0.9, 0, 1);
+  const az = CAMV.yawS + CAMV.off; CAMV.az = az;
+  if (CAMV.shake > 0) CAMV.shake -= dt * 2; const sh = Math.max(0, CAMV.shake);
+  const high = CAMV.view === 'high';
+  let dist = high ? 7.8 : 4.6; const el = (high ? 32 : 15) * D2R, ly0 = H.y + 1.25;
+  let clip = 1;
+  for (let t = 1; t > 0.25; t -= 0.06) { const sx = H.x - Math.sin(az) * dist * Math.cos(el) * t, sz = H.z - Math.cos(az) * dist * Math.cos(el) * t, syy = ly0 + dist * Math.sin(el) * t; if (solidAt(sx, syy, sz, 0.35)) clip = t - 0.06; }
+  CAMV.clip = CAMV.clip == null ? clip : CAMV.clip + (clip - CAMV.clip) * clamp(dt * (clip < CAMV.clip ? 14 : 3), 0, 1);
+  dist *= Math.max(0.3, CAMV.clip);
+  const px = H.x - Math.sin(az) * dist * Math.cos(el), pz = H.z - Math.cos(az) * dist * Math.cos(el), py = ly0 + dist * Math.sin(el);
+  cam.position.set(px + (Math.random() - 0.5) * sh * 0.2, py + (Math.random() - 0.5) * sh * 0.2, pz);
+  const lx = H.x + Math.sin(az) * 1.6, lz = H.z + Math.cos(az) * 1.6; CAMV.lookX = lx; CAMV.lookZ = lz;
+  cam.lookAt(lx, H.y + 1.05, lz); cam.fov = high ? 50 : 56; cam.updateProjectionMatrix();
+}
 function camUpdate(dt) {
+  if (HERO.on) { camFoot(dt); return; }
   const C = CAR, cam = R3.cam;
   // the view swings to follow the car's heading, lagging a touch, plus whatever the player has dragged it round by
   // (the heading and the direction of travel are blended as a wrapped difference, never across the ±180° seam, and a

@@ -30,6 +30,7 @@ function boot() {
 }
 // ---------- the drive ----------
 function startDrive(carIdx) {
+  footReset(); G.carIdx = carIdx;
   carSetup(CARS[carIdx], SET.auto);
   // 中山路 just south of 美麗島, heading south down the long straight toward 中央公園 and 三多商圈
   const L = MAP.landmarks.美麗島; CAR.x = L[0] - 5.95; CAR.z = L[1] + 75; CAR.yaw = 0; CAR.y = groundH(CAR.x, CAR.z); CAR.vyv = 0;
@@ -39,14 +40,15 @@ function startDrive(carIdx) {
   CTL.mode = SET.ctrl === 'tilt' && CTL.tilt.ok ? 'tilt' : 'touch'; layoutPads(); setTimeout(tiltRecenter, 300);
   G.mode = 'drive'; G.paused = false; show(null); r3FogRange(FOG_NEAR, FOG_FAR); CAR.ghost = false;
   if (AU.ctx) engineStart(CARS[carIdx].engine);
-  hudMsg('高雄・港都', '自由行駛・停住時按住煞車就倒車・右上切換視角', '#ffd23a', 3);
+  hudMsg('高雄・港都', '自由行駛・停車後按「下車」可以走路、搶車', '#ffd23a', 3);
 }
 function onPausePressed() { if (G.mode !== 'drive') return; G.paused = !G.paused; if (G.paused) { show('pause'); if (AU.ctx) AU.ctx.suspend(); } else { show(null); if (AU.ctx) AU.ctx.resume(); } }
-function driveEnd() { sirenUpdate(0, 1); WANT.stars = 0; WANT.heat = 0; for (const c of WANT.cops) { const i = TR.veh.indexOf(c); if (i >= 0) retire(c, i); } WANT.cops.length = 0; }
+function driveEnd() { footReset(); sirenUpdate(0, 1); WANT.stars = 0; WANT.heat = 0; for (const c of WANT.cops) { const i = TR.veh.indexOf(c); if (i >= 0) retire(c, i); } WANT.cops.length = 0; }
 let lastT = performance.now(), fpsAcc = 0, fpsN = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   if (G.halt) return;
+  if (R3.hero && R3.hero.next < R3.hero.n) heroPaintStep(G.mode === 'drive' ? 3 : 8);   // the hero's pictures, a few at a time
   let dt = Math.min(0.05, (now - lastT) / 1000); lastT = now; dt *= G.speed;
   fpsAcc += dt; fpsN++; if (fpsAcc > 0.5) { G.fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; dynRes(); }
   tick(dt);
@@ -91,17 +93,19 @@ function tick(dt) {
   G.t += dt;
   controlsUpdate(dt);
   const n = Math.max(1, Math.ceil(dt / (1 / 240))), h = dt / n;
+  CAR.parked = HERO.on; if (HERO.on) { const C = CAR; C.throttle = 0; C.brake = 0; C.hand = 1; C.steerIn = 0; heroStep(dt); }
   for (let i = 0; i < n; i++) carStep(h);
+  carDamageTick(dt); fxTick(dt); freeTick(dt); parkTick();
   { const t0 = performance.now(); trafficTick(dt); const t1 = performance.now(); peopleTick(dt); const t2 = performance.now(); TR.stats.ms = lerp(TR.stats.ms || 0, t1 - t0, 0.05); PEO.stats.ms = lerp(PEO.stats.ms || 0, t2 - t1, 0.05); }
   if (SET.jobs) missionsTick(dt); else if (MIS.active || MIS.avail.length) { MIS.active = null; MIS.avail.length = 0; } wantedTick(dt);
   if (CAR.crashT > 0) CAR.crashT -= dt;
   if (CAR.slipK > 1.05 && Math.abs(CAR.vx) > 3 && Math.random() < 0.6) { r3AddMark(CAR.x - Math.sin(CAR.yaw) * CAR.P.b, CAR.z - Math.cos(CAR.yaw) * CAR.P.b, CAR.yaw, 1); r3AddMark(CAR.x - Math.sin(CAR.yaw) * CAR.P.b, CAR.z - Math.cos(CAR.yaw) * CAR.P.b, CAR.yaw, -1); }
   camUpdate(dt); signalsUpdate();
-  engineUpdate(CAR.rpm, CAR.P.red, CAR.throttle, Math.abs(CAR.vx), clamp(CAR.slipK - 0.9, 0, 1), CAR.surface !== GK.asphalt && CAR.surface !== GK.concrete ? 1 : 0, false, CAR.hand > 0.5 && Math.abs(CAR.vx) > 5);
+  if (!HERO.on && !CAR.broken) engineUpdate(CAR.rpm, CAR.P.red, CAR.throttle, Math.abs(CAR.vx), clamp(CAR.slipK - 0.9, 0, 1), CAR.surface !== GK.asphalt && CAR.surface !== GK.concrete ? 1 : 0, false, CAR.hand > 0.5 && Math.abs(CAR.vx) > 5);
   for (const m of HUD.msgs) m.t += dt; HUD.msgs = HUD.msgs.filter((m) => m.t < m.dur);
   // in the water, or wedged: back to the road after a moment
-  if (CAR.surface === GK.water) { G.wetT = (G.wetT || 0) + dt; if (G.wetT > 0.6 && !G.wetMsg) { G.wetMsg = true; hudMsg('掉進水裡了', '3 秒後回到路上', '#7cd0ff', 3); } if (G.wetT > 3.5) { carToRoad(); G.wetT = 0; G.wetMsg = false; } } else { G.wetT = 0; G.wetMsg = false; }
-  if (CAR.throttle > 0.5 && CAR.kmh < 4 && !CAR.rev) { G.stuckT = (G.stuckT || 0) + dt; if (G.stuckT > 4 && !G.stuckMsg) { G.stuckMsg = true; hudMsg('卡住了？', '按住煞車可倒車，或暫停→回到路上', '#ffd23a', 3); } } else { G.stuckT = 0; G.stuckMsg = false; }
+  if (!HERO.on && CAR.surface === GK.water) { G.wetT = (G.wetT || 0) + dt; if (G.wetT > 0.6 && !G.wetMsg) { G.wetMsg = true; hudMsg('掉進水裡了', '3 秒後回到路上', '#7cd0ff', 3); } if (G.wetT > 3.5) { carToRoad(); G.wetT = 0; G.wetMsg = false; } } else { G.wetT = 0; G.wetMsg = false; }
+  if (!HERO.on && !CAR.broken && CAR.throttle > 0.5 && CAR.kmh < 4 && !CAR.rev) { G.stuckT = (G.stuckT || 0) + dt; if (G.stuckT > 4 && !G.stuckMsg) { G.stuckMsg = true; hudMsg('卡住了？', '按住煞車可倒車，或暫停→回到路上', '#ffd23a', 3); } } else { G.stuckT = 0; G.stuckMsg = false; }
 }
 function onCarHit(into) { CAMV.shake = Math.min(1, into / 10); if (into > 2.5) sfxCrash(clamp(into / 20, 0.3, 1)); else sfxThud(0.5); }
 function onKerb() { CAMV.shake = Math.max(CAMV.shake, 0.3); sfxThud(0.4); }
@@ -125,9 +129,11 @@ function pad(r, label, on) { if (!r) return; hud.fillStyle = on ? 'rgba(255,210,
 function drawHud() {
   const W = innerWidth, H = innerHeight, C = CAR; hud.clearRect(0, 0, W, H);
   if (!HUD.show) return;
+  if (HERO.on) { drawFootHud(W, H); return; }
   // speed and gear, bottom centre-right
   otext(String(Math.round(C.kmh)), W * 0.5 + 60, H - 28, 44, '#ffffff', null, 'right', '#0a1028', 4); otext('km/h', W * 0.5 + 66, H - 28, 14, '#ffd23a', null, 'left', '#0a1028', 2);
   otext((C.auto ? 'AT ' : 'MT ') + (C.rev ? 'R' : C.gear), W * 0.5 - 70, H - 28, 22, '#9ad0ff', null, 'right', '#0a1028', 3);
+  dmgBar(W * 0.5 + 76, H - 44, C.damage, C.broken);
   // the rev bar
   const r = clamp(C.rpm / C.P.red, 0, 1.05), bx = W * 0.5 - 70, by = H - 18, bw = 136; hud.fillStyle = 'rgba(0,0,0,.4)'; hud.fillRect(bx, by, bw, 6); hud.fillStyle = r > 0.92 ? '#ff4f6d' : '#7cf26a'; hud.fillRect(bx, by, bw * Math.min(1, r), 6);
   // what the tyres are doing
@@ -147,10 +153,42 @@ function drawHud() {
   // the pads
   if (IS_TOUCH) { const P = CTL.pads, T = [...CTL.touches.values()]; pad(P.gas, '油門', T.some((t) => t.kind === 'gas')); pad(P.brake, '煞車', T.some((t) => t.kind === 'brake')); pad(P.hand, '手煞車', T.some((t) => t.kind === 'hand')); if (!C.auto) { pad(P.up, '▲ 升檔', false); pad(P.dn, '▼ 降檔', false); } if (P.steer) { pad(P.steer, CTL.mode === 'tilt' ? '← 滑動也能轉 →' : '← 滑動轉向 →', T.some((t) => t.kind === 'steer')); } }
   pad(CTL.pads.view, { chase: '肩後', cockpit: '座艙', high: '俯視' }[CAMV.view], false); pad(CTL.pads.pause, '∥', false); pad(CTL.pads.horn, '喇叭', false); if (CTL.pads.zero) pad(CTL.pads.zero, '歸零', false);
+  pad(CTL.pads.exit, '下車', C.broken || C.kmh < 22);
   if (SET.jobs) missionsHud(W, H); wantedHud(W, H);
   // the wheel, so the player sees what the tilt is doing
   { const sx = W * 0.5, sy = H - 92; hud.fillStyle = 'rgba(0,0,0,.35)'; hud.fillRect(sx - 60, sy, 120, 6); hud.fillStyle = '#ffd23a'; hud.fillRect(sx + C.steerIn * 56 - 4, sy - 3, 8, 12); }
   if (CAMV.fp) drawCockpit();
+}
+// how hurt the vehicle is: a short bar, green to red; a dead engine says so
+function dmgBar(x, y, d, broken) {
+  const w = 64, k = clamp(1 - d, 0, 1); hud.fillStyle = 'rgba(0,0,0,.45)'; hud.fillRect(x, y, w, 7);
+  hud.fillStyle = broken ? '#ff4f6d' : k > 0.6 ? '#7cf26a' : k > 0.3 ? '#ffd23a' : '#ff8a3a'; hud.fillRect(x, y, w * (broken ? 1 : k), 7);
+  otext(broken ? '引擎掛了' : '車況', x, y - 4, 11, broken ? '#ff4f6d' : '#fff3dc', { family: '"Noto Sans TC",sans-serif' }, 'left', '#0a1028', 2);
+}
+// on foot: the stick under the left thumb, the punch and get-in buttons under the right, what is within reach
+function drawFootHud(W, H) {
+  const P = plr(), Hh = HERO;
+  otext(MAP.name, 14, 30, 18, '#fff3dc', { family: '"Noto Sans TC",sans-serif' }, 'left', '#0a1028', 3);
+  otext(G.fps + ' fps', 14, 50, 11, 'rgba(255,243,220,.7)', null, 'left', '#0a1028', 2);
+  { const n = nearestRoad(P.x, P.z, P.y); if (n && n.d < n.e.w / 2 + 12 && n.e.rd.name) otext(n.e.rd.name, 14, 74, 16, '#fff3dc', { family: '"Noto Sans TC",sans-serif' }, 'left', '#0a1028', 3); }
+  // the minimap (up by the place names, out of the stick's way): the hero, and where the car was left
+  const ms = Math.min(120, H * 0.24), mx = 14, my = 88; hud.save(); rrect(mx, my, ms, ms, 10); hud.clip(); hud.globalAlpha = 0.85; hud.drawImage(HUD.minimap, mx, my, ms, ms); hud.globalAlpha = 1;
+  const k = ms / MAP.W; hud.fillStyle = '#30a8ff'; hud.beginPath(); hud.arc(mx + CAR.x * k, my + CAR.z * k, 4, 0, TAU); hud.fill();
+  hud.fillStyle = '#ff4f6d'; hud.beginPath(); hud.arc(mx + Hh.x * k, my + Hh.z * k, 4, 0, TAU); hud.fill(); hud.restore();
+  let y = H * 0.3; for (const m of HUD.msgs) { hud.globalAlpha = m.t < 0.15 ? m.t / 0.15 : m.t > m.dur - 0.3 ? (m.dur - m.t) / 0.3 : 1; otext(m.text, W / 2, y, 30, m.col, { family: '"Noto Sans TC",sans-serif' }, 'center', '#0a1028', 4); if (m.sub) otext(m.sub, W / 2, y + 24, 15, '#fff3dc', { family: '"Noto Sans TC",sans-serif' }, 'center', '#0a1028', 2); hud.globalAlpha = 1; y += 60; }
+  // the stick
+  const st = [...CTL.touches.values()].find((t) => t.kind === 'stick');
+  if (st) { const R = CTL.stickR, dx = st.x - st.x0, dy = st.y - st.y0, d = Math.hypot(dx, dy), kx = d > R ? dx / d * R : dx, ky = d > R ? dy / d * R : dy; hud.fillStyle = 'rgba(10,16,40,.35)'; hud.beginPath(); hud.arc(st.x0, st.y0, R, 0, TAU); hud.fill(); hud.strokeStyle = 'rgba(255,243,220,.5)'; hud.lineWidth = 2; hud.stroke(); hud.fillStyle = d > R * 0.62 ? 'rgba(255,210,58,.75)' : 'rgba(255,243,220,.7)'; hud.beginPath(); hud.arc(st.x0 + kx, st.y0 + ky, R * 0.42, 0, TAU); hud.fill(); }
+  else if (IS_TOUCH) { const S = CTL.pads.stick; otext('左手拖曳移動・推到底用跑的', S.x + 18, H - 22, 12, 'rgba(255,243,220,.6)', { family: '"Noto Sans TC",sans-serif' }, 'left', '#0a1028', 2); }
+  // the buttons: round ones, under the right thumb
+  const btn = (r, label, sub, on, dim) => { const cx = r.x + r.w / 2, cy = r.y + r.h / 2, rad = Math.min(r.w, r.h) / 2; hud.fillStyle = dim ? 'rgba(10,16,40,.28)' : on ? 'rgba(255,210,58,.5)' : 'rgba(10,16,40,.5)'; hud.beginPath(); hud.arc(cx, cy, rad, 0, TAU); hud.fill(); hud.strokeStyle = dim ? 'rgba(255,243,220,.25)' : 'rgba(255,243,220,.7)'; hud.lineWidth = 2.5; hud.stroke(); otext(label, cx, cy + (sub ? 2 : 9), Math.round(rad * 0.52), dim ? 'rgba(255,243,220,.45)' : '#fff3dc', { family: '"Noto Sans TC",sans-serif' }, 'center', '#0a1028', 3); if (sub) otext(sub, cx, cy + rad * 0.5, 11, dim ? 'rgba(255,243,220,.45)' : '#ffd23a', { family: '"Noto Sans TC",sans-serif' }, 'center', '#0a1028', 2); };
+  const T = [...CTL.touches.values()], tg = Hh.tgt;
+  btn(CTL.pads.punch, '打', null, T.some((t) => t.kind === 'punch') || Hh.punchT > 0, Hh.down > 0);
+  const what = tg ? (tg.kind === 'street' ? (tg.ref.broken ? '壞了' : (tg.ref.cop ? '警車' : vehName(trafficSpec(tg.ref.kind)))) : tg.kind === 'own' ? (CAR.broken ? '壞了' : '我的車') : vehName(tg.ref.spec)) : null;
+  btn(CTL.pads.car, tg && tg.kind === 'street' ? '搶車' : '上車', what, !!tg && tg.d <= FOOT.reach, !tg);
+  if (!IS_TOUCH) otext('WASD 走・推到底跑（Shift 慢走）・空白鍵 打・F 上車/搶車', W / 2, H - 14, 12, 'rgba(255,243,220,.7)', { family: '"Noto Sans TC",sans-serif' }, 'center', '#0a1028', 2);
+  pad(CTL.pads.view, { chase: '肩後', cockpit: '肩後', high: '俯視' }[CAMV.view], false); pad(CTL.pads.pause, '∥', false);
+  if (SET.jobs) missionsHud(W, H); wantedHud(W, H);
 }
 // the driver's seat: the dash across the bottom, the wheel turning with the steering, the gauges
 function drawCockpit() {
@@ -165,9 +203,10 @@ function drawCockpit() {
 }
 // ---------- test hooks ----------
 window.__kh = {
-  G, CAR, CAMV, CTL, MAP, PROPS, R3, SET, CARS, CITY, ATLAS, setTod, AERIAL, aerialEnter, startDrive, carToRoad, show, trafficReset, carPhysics, groundH, solidsNear, solidAt, nearestRoad, SOL, r3Cull, TR, TRF, PEO, MIS, PRO, WANT, heatUp, turn(ci, i) { return carTurnFrame(CARS[ci], i).toDataURL(); },
+  G, CAR, CAMV, CTL, MAP, PROPS, R3, SET, CARS, CITY, ATLAS, setTod, AERIAL, aerialEnter, startDrive, carToRoad, show, trafficReset, HERO, PARK, FREEW, FXP, carAction, heroPunch, touchDown, touchMove, touchUp, heroTarget, enterVehicle, exitCar, breakVehicle, vehHurt, trafficSpec, carPhysics, groundH, solidsNear, solidAt, nearestRoad, SOL, r3Cull, TR, TRF, PEO, MIS, PRO, WANT, heatUp, turn(ci, i) { return carTurnFrame(CARS[ci], i).toDataURL(); },
   halt(on) { G.halt = !!on; }, sim(sec, h) { h = h || 1 / 120; const n = Math.round(sec / h); for (let i = 0; i < n; i++) tick(h); return this.state(); },
   step(dt) { tick(dt); render(dt); return $('gl').toDataURL('image/png'); },
   draw() { render(0); return $('gl').toDataURL('image/png'); },
+  heroSheet() { heroPaintStep(1e9); const H = paintHero(), cols = HERO_POSES.length, fw = H.frames[0].cw, fh = H.frames[0].ch, cv = canvas(cols * fw, (HERO_DIRS + 1) * fh), g = cv.getContext('2d'); g.fillStyle = '#c9d4de'; g.fillRect(0, 0, cv.width, cv.height); H.frames.forEach((f, i) => g.drawImage(f.toCanvas(), (i % cols) * fw, Math.floor(i / cols) * fh)); return cv.toDataURL('image/png'); },
   state() { const C = CAR; return { x: +C.x.toFixed(1), z: +C.z.toFixed(1), yaw: +C.yaw.toFixed(2), kmh: Math.round(C.kmh), vy: +C.vy.toFixed(2), r: +C.r.toFixed(2), rpm: Math.round(C.rpm), gear: C.gear, surf: C.surface, slip: +C.slipK.toFixed(2), dmg: +C.damage.toFixed(2), fps: G.fps }; },
 };

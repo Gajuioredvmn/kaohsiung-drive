@@ -11,7 +11,7 @@ const CAR = {
 };
 // a car's physical numbers from its arcade spec: the spec's 0..1 sliders become real quantities
 function carPhysics(spec) {
-  const m = 1050 + spec.mass * 900, L = spec.L * 0.62, W = spec.W * 0.82;
+  const m = spec.m || (1050 + spec.mass * 900), L = spec.L * 0.62, W = spec.W * 0.82;   // (a scooter or a bus gives its own mass)
   const drive = spec.drive || (spec.acc > 0.8 ? 'rwd' : spec.grip > 0.8 ? 'awd' : spec.mass > 0.6 ? 'fwd' : 'rwd');
   const mid = spec.cockpit && spec.cockpit[0] < 0.4;   // a mid-engined car carries its weight further back
   const a = L * (mid ? 0.56 : drive === 'fwd' ? 0.42 : 0.5), b = L - a;
@@ -22,12 +22,12 @@ function carPhysics(spec) {
   const cdA = 0.35 * (1.8 + spec.W * 0.3) * 0.55, rr = 0.012;
   const final = (red / 60) * TAU * rw / (vtop * ratios[gearsN - 1]) / 1.05;
   const dragTop = 0.5 * 1.2 * cdA * vtop * vtop + rr * m * 9.81, pk = (dragTop * rw) / (ratios[gearsN - 1] * final) / 0.78;   // Nm at the engine, top gear at the redline is 78% of peak
-  const Tpeak = pk * (1 + 0.55 * spec.acc);
+  const Tpeak = pk * (1 + 0.55 * spec.acc) * (spec.tq || 1);   // (a heavy vehicle of the street gets more pull, so it is still fun to drive)
   return { m, L, W, a, b, h: 0.42 + 0.12 * (1 - spec.grip), Iz: m * (L * L + W * W) / 12 * 1.15, drive, mu: 1.06 + 0.3 * spec.grip, cs: 13 + 6 * spec.grip, cdA, rr, rw, red, idle: 950, ratios, final, Tpeak, brakeF: m * 9.81 * (1.05 + 0.25 * spec.grip), steerMax: (28 + 10 * spec.steer) * D2R, steerRate: 2.4 + 2.0 * spec.steer, engI: 0.25 };
 }
 function carSetup(spec, auto) {
   CAR.spec = spec; CAR.P = carPhysics(spec); CAR.auto = auto !== false;
-  Object.assign(CAR, { vx: 0, vy: 0, r: 0, rpm: CAR.P.idle, gear: 1, throttle: 0, brake: 0, hand: 0, steer: 0, slipF: 0, slipR: 0, slipK: 0, damage: 0, crashT: 0, trail: [] });
+  Object.assign(CAR, { vx: 0, vy: 0, r: 0, rpm: CAR.P.idle, gear: 1, throttle: 0, brake: 0, hand: 0, steer: 0, slipF: 0, slipR: 0, slipK: 0, damage: 0, broken: false, crashT: 0, trail: [] });
 }
 // engine torque at this rpm and throttle, with a touch of engine braking off the throttle
 function engineTorque(P, rpm, th) {
@@ -63,9 +63,13 @@ function carStep(dt) {
   const target = -inp * P.steerMax * lockK;
   C.steer += clamp(target - C.steer, -P.steerRate * dt, P.steerRate * dt);
   // ---- reverse: standing still, the brake pedal held with no throttle puts it in R; the throttle takes it back to 1 ----
-  if (Math.abs(C.vx) < 0.4) { if (C.brake > 0.3 && C.throttle < 0.05) { C.revT = (C.revT || 0) + dt; if (C.revT > 0.35) C.rev = true; } else C.revT = 0; if (C.throttle > 0.3 && C.brake < 0.05) C.rev = false; }
+  if (C.parked) { C.rev = false; C.revT = 0; }   // left at the kerb: no one at the pedals
+  else if (Math.abs(C.vx) < 0.4) { if (C.brake > 0.3 && C.throttle < 0.05) { C.revT = (C.revT || 0) + dt; if (C.revT > 0.35) C.rev = true; } else C.revT = 0; if (C.throttle > 0.3 && C.brake < 0.05) C.rev = false; }
   let th = C.throttle, br = C.brake;
   if (C.rev) { th = C.brake; br = C.throttle; }   // in reverse the pedals swap roles: the brake pedal is the reverse throttle
+  // a hurt engine gives less, a dead one nothing (it rolls on, and the brakes still work)
+  th *= C.broken ? 0 : 1 - 0.55 * clamp((C.damage - 0.5) / 0.5, 0, 1);
+  if (C.parked) { th = 0; br = 1; }
   // ---- gearbox ----
   if (C.shiftT > 0) C.shiftT -= dt;
   const ratio = (C.rev ? -P.ratios[0] * 1.1 : P.ratios[C.gear - 1]) * P.final;

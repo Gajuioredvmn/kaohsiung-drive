@@ -1,12 +1,15 @@
 // ===================== controls: tilt or a slider for the wheel, pedals on the right, a drag to swing the camera =====================
 const IS_TOUCH = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
-const CTL = { keys: {}, touches: new Map(), mode: 'touch', tilt: { ok: false, asked: false, theta: 0, zero: 0, last: 0, raw: 0 }, pads: {}, steerT: 0, sens: 22, hand: 0, horn: 0 };
+const CTL = { keys: {}, touches: new Map(), mode: 'touch', tilt: { ok: false, asked: false, theta: 0, zero: 0, last: 0, raw: 0 }, pads: {}, steerT: 0, sens: 22, hand: 0, horn: 0, move: { x: 0, y: 0 }, walk: false, stickR: 62 };
 function layoutPads() {
   const W = innerWidth, H = innerHeight, pw = Math.min(150, W * 0.14), ph = Math.min(H * 0.56, 270);
   CTL.pads.gas = { x: W - pw - 16, y: H - ph - 18, w: pw, h: ph };
   CTL.pads.brake = { x: W - pw * 2 - 30, y: H - ph * 0.72 - 18, w: pw, h: ph * 0.72 };
   CTL.pads.hand = { x: W - pw * 2 - 30, y: H - ph - 18 - 62, w: pw * 2 + 14, h: 52 };
-  CTL.pads.view = { x: W - 64, y: 36, w: 52, h: 40 }; CTL.pads.pause = { x: W - 126, y: 36, w: 52, h: 40 }; CTL.pads.horn = { x: W - 188, y: 36, w: 52, h: 40 }; CTL.pads.zero = CTL.mode === 'tilt' ? { x: W - 262, y: 36, w: 64, h: 40 } : null;
+  CTL.pads.view = { x: W - 64, y: 36, w: 52, h: 40 }; CTL.pads.pause = { x: W - 126, y: 36, w: 52, h: 40 }; CTL.pads.horn = { x: W - 188, y: 36, w: 52, h: 40 }; CTL.pads.exit = { x: W - 270, y: 32, w: 70, h: 48 }; CTL.pads.zero = CTL.mode === 'tilt' ? { x: W - 346, y: 36, w: 64, h: 40 } : null;
+  // on foot: a stick wherever the left thumb lands, a big punch button under the right thumb, and the get-in button beside it
+  const pb = Math.min(132, H * 0.3); CTL.pads.punch = { x: W - pb - 22, y: H - pb - 24, w: pb, h: pb }; CTL.pads.car = { x: W - pb - 22 - pb * 0.86 - 14, y: H - pb * 0.78 - 24, w: pb * 0.86, h: pb * 0.78 };
+  CTL.pads.stick = { x: 0, y: 90, w: W * 0.5, h: H - 90 };
   // the slider for the wheel: the left half in touch mode; a smaller strip in tilt mode, as a stand-in when the sensor misbehaves
   CTL.pads.steer = CTL.mode === 'tilt' ? { x: 14, y: H - 96, w: Math.min(260, W * 0.3), h: 82 } : { x: 0, y: H * 0.5, w: W * 0.42, h: H * 0.5 };
   CTL.pads.up = { x: 18, y: H * 0.2, w: 110, h: 70 }; CTL.pads.dn = { x: 18, y: H * 0.2 + 82, w: 110, h: 70 };
@@ -35,6 +38,14 @@ function touchDown(id, x, y) {
   const P = CTL.pads;
   if (inR(P.pause, x, y)) { onPausePressed(); return; }
   if (inR(P.view, x, y)) { camCycle(); return; }
+  if (HERO.on) {
+    if (inR(P.punch, x, y)) { heroPunch(); CTL.touches.set(id, { kind: 'punch' }); return; }
+    if (inR(P.car, x, y)) { carAction(); CTL.touches.set(id, { kind: 'carbtn' }); return; }
+    if (inR(P.stick, x, y)) { CTL.touches.set(id, { kind: 'stick', x0: x, y0: y, x, y }); return; }
+    if (y < innerHeight * 0.34 && x > innerWidth * 0.3) { CTL.touches.set(id, { kind: 'cam', x0: x, last: x, moved: 0 }); return; }
+    CTL.touches.set(id, { kind: 'rest' }); return;
+  }
+  if (inR(P.exit, x, y)) { carAction(); return; }
   if (inR(P.horn, x, y)) { CTL.touches.set(id, { kind: 'horn' }); sfxHorn(); return; }
   if (inR(P.zero, x, y)) { tiltRecenter(); hudMsg('方向盤歸零', null, '#7cf26a', 1); return; }
   if (inR(P.gas, x, y)) { CTL.touches.set(id, { kind: 'gas' }); return; }
@@ -46,7 +57,9 @@ function touchDown(id, x, y) {
   if (y < innerHeight * 0.34 && x > innerWidth * 0.3 && x < innerWidth * 0.64) { CTL.touches.set(id, { kind: 'cam', x0: x, last: x, moved: 0 }); return; }
   CTL.touches.set(id, { kind: 'rest' });
 }
-function touchMove(id, x, y) { if (G.mode === 'god') { godTouch('move', id, x, y); return; } const t = CTL.touches.get(id); if (!t) return; if (t.kind === 'steer') t.x = x; if (t.kind === 'cam') { t.moved += Math.abs(x - t.last); if (t.moved > 24) { CAMV.off = clamp(CAMV.off + (x - t.last) * 0.0045, -2.6, 2.6); CAMV.dragging = true; } t.last = x; } }
+function touchMove(id, x, y) { if (G.mode === 'god') { godTouch('move', id, x, y); return; } const t = CTL.touches.get(id); if (!t) return; if (t.kind === 'steer') t.x = x;
+  if (t.kind === 'stick') { t.x = x; t.y = y; const R = CTL.stickR, dx = x - t.x0, dy = y - t.y0, d = Math.hypot(dx, dy); if (d > R * 1.25) { t.x0 = x - dx / d * R * 1.25; t.y0 = y - dy / d * R * 1.25; } }   // (the stick's base follows a thumb that runs off it)
+  if (t.kind === 'cam') { t.moved += Math.abs(x - t.last); if (t.moved > 24) { CAMV.off = clamp(CAMV.off + (x - t.last) * 0.0045, -2.6, 2.6); CAMV.dragging = true; } t.last = x; } }
 function touchUp(id) { if (G.mode === 'god') { godTouch('up', id); return; } const t = CTL.touches.get(id); CTL.touches.delete(id); if (t && t.kind === 'cam' && ![...CTL.touches.values()].some((q) => q.kind === 'cam')) CAMV.dragging = false; }
 const glEl = $('gl');
 glEl.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; glEl.setPointerCapture && glEl.setPointerCapture(e.pointerId); touchDown(e.pointerId, e.clientX, e.clientY); e.preventDefault(); });
@@ -59,6 +72,8 @@ addEventListener('keydown', (e) => {
     if (e.code === 'KeyC' || e.code === 'KeyV') camCycle();
     if (e.code === 'KeyH') sfxHorn();
     if (e.code === 'KeyR') carToRoad();
+    if ((e.code === 'KeyF' || e.code === 'Enter') && !e.repeat) carAction();
+    if (HERO.on && (e.code === 'Space' || e.code === 'KeyJ') && !e.repeat) heroPunch();
     if (!CAR.auto) { if (e.code === 'KeyE' || e.code === 'ShiftLeft') carShift(CAR.gear + 1); if (e.code === 'KeyQ' || e.code === 'ControlLeft') carShift(CAR.gear - 1); }
     if (e.code === 'Escape' || e.code === 'KeyP') onPausePressed();
   }
@@ -89,6 +104,11 @@ function tiltRecenter() { CTL.tilt.zero = CTL.tilt.raw; CTL.tilt.theta = CTL.til
 addEventListener('orientationchange', () => setTimeout(tiltRecenter, 600));
 function controlsUpdate(dt) {
   const K = CTL.keys, C = CAR;
+  // on foot: the stick (or the keys), as a direction on the screen: x to the right, y up (away from the camera)
+  { let mx = 0, my = 0; if (K.ArrowLeft || K.KeyA) mx -= 1; if (K.ArrowRight || K.KeyD) mx += 1; if (K.ArrowUp || K.KeyW) my += 1; if (K.ArrowDown || K.KeyS) my -= 1;
+    const kl = Math.hypot(mx, my); if (kl > 0) { mx /= kl; my /= kl; }
+    for (const t of CTL.touches.values()) if (t.kind === 'stick') { const R = CTL.stickR, dx = (t.x - t.x0) / R, dy = -(t.y - t.y0) / R, d = Math.hypot(dx, dy); mx = d > 1 ? dx / d : dx; my = d > 1 ? dy / d : dy; }
+    CTL.move.x = mx; CTL.move.y = my; CTL.walk = !!(K.ShiftLeft || K.ShiftRight); }
   let steer = 0, gas = 0, brake = 0, hand = 0;
   if (K.ArrowLeft || K.KeyA) steer -= 1; if (K.ArrowRight || K.KeyD) steer += 1;
   if (K.ArrowUp || K.KeyW || K.KeyZ) gas = 1; if (K.ArrowDown || K.KeyS || K.KeyX) brake = 1; if (K.Space) hand = 1;
@@ -106,4 +126,4 @@ function controlsUpdate(dt) {
 function carToRoad() { const n = nearestRoad(CAR.x, CAR.z, CAR.y); if (!n) return; const rx_ = Math.cos(n.yaw), rz_ = -Math.sin(n.yaw); CAR.x = n.x + rx_ * n.e.w * 0.25; CAR.z = n.z + rz_ * n.e.w * 0.25; CAR.yaw = n.yaw; CAR.y = groundH(CAR.x, CAR.z, CAR.y); CAR.vx = CAR.vy = CAR.r = 0; camReset(); }
 
 // the three views in turn: over the shoulder → the seat → the high HD-2D angle
-function camCycle() { const order = ['chase', 'cockpit', 'high']; CAMV.view = order[(order.indexOf(CAMV.view) + 1) % 3]; CAMV.fp = CAMV.view === 'cockpit'; }
+function camCycle() { if (HERO.on) { CAMV.view = CAMV.view === 'high' ? 'chase' : 'high'; CAMV.fp = false; return; } const order = ['chase', 'cockpit', 'high']; CAMV.view = order[(order.indexOf(CAMV.view) + 1) % 3]; CAMV.fp = CAMV.view === 'cockpit'; }

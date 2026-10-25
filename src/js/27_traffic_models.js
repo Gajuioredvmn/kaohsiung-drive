@@ -206,7 +206,7 @@ function trailerModel(load, view) {
 }
 
 // a scooter and its rider: the step-through body, the seat, a rider in a helmet leaning on the bars
-function scooterModel(col, helmet, shirt, view) {
+function scooterModel(col, helmet, shirt, view, noRider) {
   const L = 1.85, zA = 0.3, wb = 1.3, Z = (z) => z;
   const body = { col, secs: [rectSec(Z(-zA), 0.3, 0.45, 0.8, { r: 0.1 }), rectSec(Z(0.6), 0.32, 0.4, 0.86, { r: 0.1 }), rectSec(Z(0.9), 0.2, 0.3, 0.5, { r: 0.08 }), rectSec(Z(1.4), 0.28, 0.35, 0.85, { r: 0.1 }), rectSec(Z(L - zA), 0.26, 0.4, 0.75, { r: 0.1 })] };
   const seat = boxPart(0.22, 0.8, 0.9, Z(-zA + 0.1), Z(0.75), 0x1a1a1e, { r: 0.05 });
@@ -221,7 +221,7 @@ function scooterModel(col, helmet, shirt, view) {
     if (view !== 'rear') { const z = Z(L - zA) + 0.001; const q = plate(c, z, -0.1, 0.1, 0.55, 0.68, 0xfff8d8); lampBox(c, q); if (!STYLE.toon) plate(c, Z(0.62) + 0.001, -0.1, 0.1, 1.54, 1.64, 0x2a3440); }
   }];
   // the illustrated style gives the rider a round helmet with its visor and a bit of face, instead of the boxy head
-  if (STYLE.toon) extras.push((c) => {
+  if (STYLE.toon && !noRider) extras.push((c) => {
     const cen = c.pr(0, 1.6, 0.46), top = c.pr(0, 1.78, 0.46), r = Math.max(1.5, Math.hypot(top[0] - cen[0], top[1] - cen[1])), vis = c.pr(0, 1.57, 0.62), front = vis[2] < cen[2] - 0.02;
     c.items.push({ d: cen[2] - 0.03, L: 1, draw: () => {
       const g = c.px.g; if (!g) return;
@@ -230,9 +230,18 @@ function scooterModel(col, helmet, shirt, view) {
       if (front) { const vx = vis[0], vy = vis[1]; g.fillStyle = '#f2c8a0'; g.beginPath(); g.ellipse(vx, vy + r * 0.3, r * 0.5, r * 0.3, 0, 0, TAU); g.fill(); g.fillStyle = '#2a3440'; g.beginPath(); g.ellipse(vx, vy - r * 0.05, r * 0.62, r * 0.32, 0, 0, TAU); g.fill(); g.stroke(); }
     } });
   });
-  return { parts: STYLE.toon ? [body, seat, legs, torso, arms, bars] : [body, seat, legs, torso, arms, head, bars], tyres, extras, shadow: { hw: 0.34, z0: Z(-zA), z1: Z(L - zA) } };
+  return { parts: noRider ? [body, seat, bars] : STYLE.toon ? [body, seat, legs, torso, arms, bars] : [body, seat, legs, torso, arms, head, bars], tyres, extras, shadow: { hw: 0.34, z0: Z(-zA), z1: Z(L - zA) } };
 }
 // ---------- the sprite sheets: thirteen frames from behind round to head-on ----------
+const SC_COLS = [0xffffff, 0xd8242a, 0x1a58b8, 0x2a2a2a, 0xf2c21a, 0x9aa0a6, 0x3ac8d8, 0xe87a8a];
+// a scooter taken off the street: drawn again with the hero on it (black hair, red shirt), and standing empty once left
+function riderKind(kind, rider) {
+  const name = 'h' + rider + '-' + kind; if (TRF.kinds[name]) return name;
+  const col = SC_COLS[+kind.replace('scooter', '') || 0];
+  const build = rider === 'none' ? (v) => scooterModel(col, 0, 0, v, true) : (v) => scooterModel(col, 0x1c1a24, 0xe8423a, v, false);
+  TRF.kinds[name] = { name, type: 'scooter', frames: trafficFrames(build, 0.7, 1.75, 1.85), L: 1.85, W: 0.7, extra: true };
+  return name;
+}
 const TRF = { ppm: 28, ppmLong: 20, D: 18, H: 2.2, N: 13, kinds: {}, atlas: null };
 function trafficFrames(build, wM, hM, lM, long) {
   const ppm = long ? TRF.ppmLong : TRF.ppm, frames = [];
@@ -256,6 +265,6 @@ function paintTrafficKinds() {
   reg('gravel', 'truck', (v) => gravelModel(v), 2.5, 3.6, 8.2, true);
   [0x2a2a30, 0xf2f2ee, 0x4a6a9a].forEach((c, i) => reg('suv' + i, 'car', (v) => suvModel(c, v), 1.9, 2.0, 4.8));
   [0xd8d2c0, 0x2a4a8a].forEach((c, i) => reg('wagon' + i, 'car', (v) => wagonModel(c, v), 1.8, 1.75, 4.7));
-  const cols = [0xffffff, 0xd8242a, 0x1a58b8, 0x2a2a2a, 0xf2c21a, 0x9aa0a6, 0x3ac8d8, 0xe87a8a], hel = [0xd8242a, 0xffffff, 0x1a58b8, 0xf2c21a, 0xf27aa8, 0x2a2a2a, 0x18884a, 0xffffff], sh = [0xffffff, 0x3a6ab8, 0xd8a83a, 0x2a2a2a, 0xe87a8a, 0x6aa848, 0xf2f2f2, 0x404040];
+  const cols = SC_COLS, hel = [0xd8242a, 0xffffff, 0x1a58b8, 0xf2c21a, 0xf27aa8, 0x2a2a2a, 0x18884a, 0xffffff], sh = [0xffffff, 0x3a6ab8, 0xd8a83a, 0x2a2a2a, 0xe87a8a, 0x6aa848, 0xf2f2f2, 0x404040];
   for (let i = 0; i < 8; i++) reg('scooter' + i, 'scooter', (v) => scooterModel(cols[i], hel[i], sh[i], v), 0.7, 1.75, 1.85);
 }
